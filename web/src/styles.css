@@ -1,0 +1,113 @@
+/* Цвета берутся из темы Telegram, если приложение открыто как Mini App; иначе свои, со светлой и тёмной темой. */
+:root {
+  --bg: var(--tg-theme-bg-color, #ffffff);
+  --bg2: var(--tg-theme-secondary-bg-color, #f3f5f9);
+  --text: var(--tg-theme-text-color, #16181d);
+  --muted: var(--tg-theme-hint-color, #6b7280);
+  --accent: var(--tg-theme-button-color, #2f6feb);
+  --accent-text: var(--tg-theme-button-text-color, #ffffff);
+  --link: var(--tg-theme-link-color, #2f6feb);
+  --border: color-mix(in srgb, var(--text) 12%, transparent);
+  --ok: #1a9c5b;
+  --warn: #c98a00;
+  --bad: #d64545;
+  --radius: 14px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(.in-telegram) {
+    --bg: #111318;
+    --bg2: #1b1e25;
+    --text: #e8eaef;
+    --muted: #9aa1ad;
+    --accent: #4d86f5;
+    --link: #7aa5ff;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg2); color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+h1, h2, h3 { margin: 0; line-height: 1.25; }
+h2 { font-size: 17px; }
+a { color: var(--link); }
+ul { margin: 4px 0; padding-left: 20px; }
+input, textarea, select { width: 100%; font: inherit; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+textarea { resize: vertical; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+label > input, label > textarea, label > select { color: var(--text); font-size: 15px; }
+label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); }
+label.check input { width: auto; }
+
+.app { max-width: 760px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+.topbar { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; }
+.in-telegram .topbar { display: none; }
+.brand { font-weight: 700; font-size: 18px; }
+.content { flex: 1; padding: 8px 16px 96px; }
+.tabbar { position: fixed; bottom: 0; left: 0; right: 0; display: flex; justify-content: center; gap: 4px;
+  background: var(--bg); border-top: 1px solid var(--border); padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); }
+.tabbar a { flex: 1; max-width: 200px; text-align: center; padding: 8px; border-radius: 10px; color: var(--muted);
+  text-decoration: none; font-weight: 500; }
+.tabbar a.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+.card { background: var(--bg); border-radius: var(--radius); padding: 16px; border: 1px solid var(--border);
+  color: inherit; text-decoration: none; display: block; }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.small-gap { gap: 4px; }
+.row { display: flex; align-items: center; }
+.gap { gap: 8px; }
+.wrap { flex-wrap: wrap; }
+.grow { flex: 1; min-width: 0; }
+.center { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 24px 16px; margin: 0 auto; }
+.narrow { max-width: 440px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.error { color: var(--bad); }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pre { white-space: pre-wrap; margin: 0; }
+
+.btn { display: inline-flex; justify-content: center; align-items: center; gap: 6px; border: 0; border-radius: 10px;
+  padding: 11px 16px; font: inherit; font-weight: 600; cursor: pointer; background: var(--accent);
+  color: var(--accent-text); text-decoration: none; }
+.btn.secondary { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.btn.danger { background: var(--bad); color: #fff; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.file { cursor: pointer; }
+.link { background: none; border: 0; color: var(--link); font: inherit; cursor: pointer; padding: 4px; text-decoration: none; }
+
+.banner { padding: 10px 14px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 12%, var(--bg)); }
+.banner.error { background: color-mix(in srgb, var(--bad) 14%, var(--bg)); color: var(--text); }
+.banner.warn { background: color-mix(in srgb, var(--warn) 16%, var(--bg)); }
+.tag { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--bg2); color: var(--muted); white-space: nowrap; }
+.tag.ok { color: var(--ok); }
+.tag.warn { color: var(--warn); }
+
+.sources { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.sources li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--bg2); border-radius: 10px; flex-wrap: wrap; }
+.sources li.error { color: var(--bad); }
+.field { display: grid; grid-template-columns: 120px 1fr; gap: 8px; }
+@media (max-width: 480px) { .field { grid-template-columns: 1fr; gap: 0; } }
+.exp { margin-top: 8px; }
+
+.vac { display: flex; gap: 12px; align-items: flex-start; }
+.score { flex: none; width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center;
+  font-weight: 700; background: var(--bg2); color: var(--muted); }
+.score.big { width: 64px; height: 64px; font-size: 22px; }
+.score.hi { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.score.mid { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.score.lo { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+
+.bars { display: flex; flex-direction: column; gap: 6px; }
+.bar { display: grid; grid-template-columns: 80px 1fr 32px; align-items: center; gap: 8px; font-size: 13px; }
+.bar div { height: 8px; background: var(--bg2); border-radius: 99px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+.bar b { text-align: right; }
+
+.tabs, .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.tabs button, .chips button { border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  border-radius: 99px; padding: 6px 14px; font: inherit; cursor: pointer; }
+.tabs button.on, .chips button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.cv li.flagged { color: var(--bad); text-decoration: line-through; }
+input[type="range"] { width: 140px; padding: 0; }

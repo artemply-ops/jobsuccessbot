@@ -1,0 +1,93 @@
+# Посевной каталог компаний. Сегменты: it, digital, fintech, adtech, medtech.
+# Поля: name, domain (основной сайт), description (необязательно), careers_url (необязательно).
+# Карьерный раздел и способ чтения находит задача discovery; до проверки статус unverified.
+# Домены указаны по общедоступной информации и перепроверяются discovery (недоступные уйдут в error).
+# Цель каталога: 300-500 компаний. Сейчас это стартовый набор, пополняется через админку и пользователей.
+
+it:
+  - {name: Яндекс, domain: yandex.ru, description: "Поиск, облако, сервисы, беспилотники"}
+  - {name: Лаборатория Касперского, domain: kaspersky.ru, description: "Кибербезопасность"}
+  - {name: Positive Technologies, domain: ptsecurity.com, description: "Кибербезопасность"}
+  - {name: BI.ZONE, domain: bi.zone, description: "Кибербезопасность"}
+  - {name: InfoWatch, domain: infowatch.ru, description: "Защита данных"}
+  - {name: 1С, domain: 1c.ru, description: "Бизнес-ПО"}
+  - {name: Контур, domain: kontur.ru, description: "Облачные сервисы для бизнеса"}
+  - {name: Selectel, domain: selectel.ru, description: "Облачная инфраструктура, дата-центры"}
+  - {name: Postgres Professional, domain: postgrespro.ru, description: "СУБД"}
+  - {name: Группа Астра, domain: astra.ru, description: "Операционные системы и инфраструктурное ПО"}
+  - {name: Arenadata, domain: arenadata.tech, description: "Платформы данных"}
+  - {name: Naumen, domain: naumen.ru, description: "Корпоративное ПО"}
+  - {name: Directum, domain: directum.ru, description: "Электронный документооборот"}
+  - {name: КРОК, domain: croc.ru, description: "ИТ-интегратор"}
+  - {name: ЛАНИТ, domain: lanit.ru, description: "ИТ-интегратор"}
+  - {name: IBS, domain: ibs.ru, description: "ИТ-консалтинг и разработка"}
+  - {name: Softline, domain: softline.ru, description: "ИТ-решения и сервисы"}
+  - {name: 2ГИС, domain: 2gis.ru, description: "Карты и справочник"}
+  - {name: VK, domain: vk.company, description: "Соцсети, медиа, облако"}
+  - {name: МТС, domain: mts.ru, description: "Телеком и цифровая экосистема"}
+  - {name: Билайн, domain: beeline.ru, description: "Телеком"}
+  - {name: МегаФон, domain: megafon.ru, description: "Телеком"}
+  - {name: Ростелеком, domain: rt.ru, description: "Телеком, цифровые сервисы"}
+  - {name: Битрикс24, domain: bitrix24.ru, description: "CRM и сервисы для совместной работы"}
+
+digital:
+  - {name: Ozon, domain: ozon.ru, description: "Маркетплейс"}
+  - {name: Авито, domain: avito.ru, description: "Классифайд"}
+  - {name: Wildberries, domain: wildberries.ru, description: "Маркетплейс"}
+  - {name: Циан, domain: cian.ru, description: "Недвижимость онлайн"}
+  - {name: Lamoda, domain: lamoda.ru, description: "Онлайн-ритейл одежды"}
+  - {name: Самокат, domain: samokat.ru, description: "Экспресс-доставка"}
+  - {name: Купер, domain: kuper.ru, description: "Доставка из магазинов"}
+  - {name: X5 Tech, domain: x5.ru, description: "Ритейл и цифровые сервисы"}
+  - {name: Dodo Brands, domain: dodobrands.io, description: "Сеть ресторанов, своя ИТ-платформа"}
+  - {name: Skyeng, domain: skyeng.ru, description: "Онлайн-образование"}
+  - {name: red_mad_robot, domain: redmadrobot.com, description: "Цифровые продукты, разработка"}
+  - {name: Surf, domain: surf.ru, description: "Мобильная разработка"}
+  - {name: KODE, domain: kode.ru, description: "Мобильная разработка"}
+  - {name: e-Legion, domain: e-legion.com, description: "Мобильная разработка"}
+  - {name: Just AI, domain: just-ai.com, description: "Разговорный ИИ"}
+  - {name: amoCRM, domain: amocrm.ru, description: "CRM"}
+
+fintech:
+  - {name: Т-Банк, domain: tbank.ru, description: "Цифровой банк и экосистема"}
+  - {name: Альфа-Банк, domain: alfabank.ru, description: "Банк"}
+  - {name: Сбер, domain: sberbank.com, description: "Банк и экосистема"}
+  - {name: Газпромбанк, domain: gazprombank.ru, description: "Банк"}
+  - {name: Райффайзенбанк, domain: raiffeisen.ru, description: "Банк"}
+  - {name: Совкомбанк, domain: sovcombank.ru, description: "Банк"}
+  - {name: МТС Банк, domain: mtsbank.ru, description: "Банк"}
+  - {name: Точка, domain: tochka.com, description: "Банк для бизнеса"}
+  - {name: ЮMoney, domain: yoomoney.ru, description: "Платежи"}
+  - {name: CloudPayments, domain: cloudpayments.ru, description: "Интернет-эквайринг"}
+  - {name: Robokassa, domain: robokassa.com, description: "Платёжный агрегатор"}
+  - {name: QIWI, domain: qiwi.com, description: "Платежи"}
+  - {name: Московская биржа, domain: moex.com, description: "Биржевая инфраструктура"}
+  - {name: Финам, domain: finam.ru, description: "Брокер"}
+
+adtech:
+  - {name: Admitad, domain: admitad.com, description: "Партнёрский маркетинг"}
+  - {name: Roistat, domain: roistat.com, description: "Сквозная аналитика"}
+  - {name: Calltouch, domain: calltouch.ru, description: "Сквозная аналитика, коллтрекинг"}
+  - {name: AdRiver, domain: adriver.ru, description: "Рекламные технологии"}
+  - {name: Getintent, domain: getintent.com, description: "Программатик-реклама"}
+  - {name: Segmento, domain: segmento.ru, description: "Программатик-реклама"}
+  - {name: Hybrid, domain: hybrid.ru, description: "Программатик-реклама"}
+  - {name: Mediascope, domain: mediascope.net, description: "Медиаизмерения"}
+  - {name: Mindbox, domain: mindbox.ru, description: "Автоматизация маркетинга"}
+  - {name: Unisender, domain: unisender.com, description: "Email-маркетинг"}
+  - {name: Carrot quest, domain: carrotquest.io, description: "Маркетинг и поддержка"}
+
+medtech:
+  - {name: СберЗдоровье, domain: sberhealth.ru, description: "Телемедицина и запись к врачам"}
+  - {name: ПроДокторов, domain: prodoctorov.ru, description: "Сервис отзывов о врачах"}
+  - {name: НаПоправку, domain: napopravku.ru, description: "Поиск клиник и врачей"}
+  - {name: Webiomed, domain: webiomed.ru, description: "ИИ в медицине"}
+  - {name: Цельс, domain: celsus.ai, description: "ИИ для анализа медицинских изображений"}
+  - {name: Botkin.AI, domain: botkin.ai, description: "ИИ для анализа медицинских изображений"}
+  - {name: Доктис, domain: doctis.ru, description: "Телемедицина"}
+  - {name: Medesk, domain: medesk.ru, description: "МИС для клиник"}
+  - {name: МедРокет, domain: medrocket.ru, description: "Маркетинг и сервисы для клиник"}
+  - {name: Инвитро, domain: invitro.ru, description: "Медицинские лаборатории"}
+  - {name: Гемотест, domain: gemotest.ru, description: "Медицинские лаборатории"}
+  - {name: Хеликс, domain: helix.ru, description: "Медицинские лаборатории"}
+  - {name: Медси, domain: medsi.ru, description: "Сеть клиник"}

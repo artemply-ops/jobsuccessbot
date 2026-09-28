@@ -1,0 +1,39 @@
+# Прод: сервер в российском облаке (152-ФЗ). Секреты в .env рядом, в git не попадают.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: jobpilot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в .env}
+      POSTGRES_DB: jobpilot
+    volumes: [pgdata:/var/lib/postgresql/data]
+    restart: unless-stopped
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      ENV: prod
+      DATABASE_URL: postgresql+asyncpg://jobpilot:${POSTGRES_PASSWORD}@db:5432/jobpilot
+      FILES_DIR: /data/files
+      RUN_SCHEDULER: "true"
+    volumes: [files:/data/files]
+    ports: ["8000:8000"]
+    depends_on: [db]
+    restart: unless-stopped
+
+  bot:
+    build: .
+    command: ["python", "-m", "app.bot"]
+    env_file: .env
+    environment:
+      ENV: prod
+      DATABASE_URL: postgresql+asyncpg://jobpilot:${POSTGRES_PASSWORD}@db:5432/jobpilot
+      FILES_DIR: /data/files
+    volumes: [files:/data/files]
+    depends_on: [db, api]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  files:
