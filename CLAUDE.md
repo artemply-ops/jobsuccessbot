@@ -20,6 +20,23 @@ MVP: блок 1 (профиль кандидата), блок 2 (поиск и �
 - Контакты рекрутеров из вакансий не храним (см. `collect._clean`, `trudvsem.parse`).
 - В CV нельзя выдуманных фактов: проверка фактов (`SYSTEM_FACTCHECK`) обязательна для каждого пакета.
 
+## Сервер
+Timeweb, Москва, `201.24.55.219`, общий с «Тихим словом» и другими ботами (2 ГБ RAM, память беречь).
+SSH: `ssh -i ~/.ssh/id_ed25519_tihoeslovo_deploy deploy@201.24.55.219`. Соединение часто рвётся:
+каждую команду в цикл повтора `while :; do ssh ...; rc=$?; [ $rc -ne 255 ] && break; sleep 8; done`, в фоне.
+- Код: `/opt/jobsuccessbot`, секреты в `/opt/jobsuccessbot/.env` (только на сервере, chmod 600)
+- Стек: `docker compose -f docker-compose.server.yml -p jobsuccess ...` (db, app, caddy)
+- app = API + PWA + бот в одном процессе (RUN_BOT_IN_API=true), планировщик внутри (RUN_SCHEDULER=true)
+- HTTPS: Caddy, домен `201-24-55-219.sslip.io` (временный, заменить на свой)
+- Telegram и Claude API из РФ через прокси `PROXY_URL` / `LLM_PROXY_URL` (тот же, что у «Тихого слова»)
+- Бот: @job_success_bot. Админ: tg 52622104
+- Деплой: push в GitHub `artemply-ops/jobsuccessbot` → на сервере `git pull` → `up -d --build app`
+
+## Режим без ИИ
+Пока нет ANTHROPIC_API_KEY, `llm.available()` = False: шаги с ИИ отвечают заглушкой и ведут дальше.
+Профиль: базовый из строки «должность, город, зарплата, формат». Скоринг: `method=basic` по ключевым словам,
+после подключения ИИ пересчитывается полноценно. Голос: заглушка, пока нет YANDEX_API_KEY.
+
 ## Команды (Windows, из корня проекта)
 - Тесты: `cd backend; $env:PYTHONUTF8=1; .venv\Scripts\python -m pytest -q`
 - API + PWA: `backend\.venv\Scripts\python -m uvicorn app.main:app --app-dir backend --port 8000`
