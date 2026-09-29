@@ -90,6 +90,10 @@ export async function download(path: string, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+export type Cfg = { bot_username: string; dev_login: boolean; ai: boolean; voice: boolean };
+let cfgPromise: Promise<Cfg> | null = null;
+export const getConfig = () => (cfgPromise ??= api<Cfg>("/config"));
+
 export async function login(): Promise<boolean> {
   if (getToken()) return true;
   const w = tg();

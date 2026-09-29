@@ -16,14 +16,19 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_db()
-    task = None
-    if get_settings().run_scheduler:
+    s = get_settings()
+    tasks = []
+    if s.run_scheduler:
         from app.jobs import scheduler_loop
 
-        task = asyncio.create_task(scheduler_loop())
+        tasks.append(asyncio.create_task(scheduler_loop()))
+    if s.run_bot_in_api and s.telegram_bot_token:
+        from app.bot.handlers import run_polling
+
+        tasks.append(asyncio.create_task(run_polling()))
     yield
-    if task:
-        task.cancel()
+    for t in tasks:
+        t.cancel()
 
 
 app = FastAPI(title="JobPilot", lifespan=lifespan)

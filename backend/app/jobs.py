@@ -101,7 +101,9 @@ def package_job(user_id: int, vacancy_id: int, instruction: str | None) -> JobFn
 async def daily_refresh() -> dict:
     """Ежедневно: проверка каталога, сбор с карьерных страниц, пересчёт для всех пользователей с профилем."""
     async with SessionLocal() as s:
-        d = await collect.discover_companies(s, limit=50)
+        seeded = await collect.load_seed(s)  # новые компании из посевного файла, существующие не трогает
+        await s.commit()
+        d = await collect.discover_companies(s, limit=100)
         await s.commit()
         c = await collect.collect_companies(s)
         await s.commit()
@@ -113,7 +115,7 @@ async def daily_refresh() -> dict:
                 await s.commit()
         except Exception:
             log.exception("daily refresh failed for user %s", uid)
-    return {"discover": d, "companies": c, "users": len(user_ids)}
+    return {"seeded": seeded, "discover": d, "companies": c, "users": len(user_ids)}
 
 
 async def scheduler_loop(interval_hours: int = 24) -> None:

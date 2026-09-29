@@ -121,6 +121,49 @@ async def build_profile(session: AsyncSession, user: User, new_sources: list[Sou
     return await _save_version(session, user.id, res.profile, [q.model_dump() for q in res.questions])
 
 
+def parse_basic(text: str) -> ProfileData:
+    """Базовый профиль без ИИ из строки «должность, город[, зарплата][, удалёнка]».
+
+    Пример: «Python-разработчик, Москва, 250000, удалёнка».
+    """
+    parts = [p.strip() for p in re.split(r"[,;\n]", text) if p.strip()]
+    if not parts:
+        raise ValueError("Напишите хотя бы должность, например: Python-разработчик, Москва")
+    data = ProfileData(target_roles=[parts[0]], headline=parts[0])
+    for p in parts[1:]:
+        low = p.lower()
+        digits = re.sub(r"[^\d]", "", p)
+        if any(w in low for w in ("удал", "remote", "дистанц")):
+            data.expectations.formats.append("remote")
+        elif "гибрид" in low:
+            data.expectations.formats.append("hybrid")
+        elif "офис" in low:
+            data.expectations.formats.append("office")
+        elif len(digits) >= 2:  # «250000», «250 000», «250 тыс», «250к»
+            n = int(digits)
+            data.expectations.salary_min = n * 1000 if n < 1000 else n
+        else:
+            data.expectations.cities.append(p)
+    return data
+
+
+async def save_basic(session: AsyncSession, user: User, text: str) -> Profile:
+    """Сохраняет базовый профиль, чтобы поиск работал до подключения ИИ."""
+    data = parse_basic(text)
+    current = await latest_profile(session, user.id)
+    if current:  # дописываем к существующему, ничего не теряем
+        old = ProfileData.model_validate(current.data)
+        old.target_roles = data.target_roles + [r for r in old.target_roles if r not in data.target_roles]
+        old.headline = old.headline or data.headline
+        old.expectations.cities = data.expectations.cities or old.expectations.cities
+        old.expectations.formats = data.expectations.formats or old.expectations.formats
+        old.expectations.salary_min = data.expectations.salary_min or old.expectations.salary_min
+        data = old
+    p = await _save_version(session, user.id, data, [])
+    p.confirmed = True
+    return p
+
+
 async def save_edited(session: AsyncSession, user: User, data: ProfileData, confirm: bool) -> Profile:
     """Правка профиля пользователем. Контакты в профиль не пишем: вычищаем на всякий случай."""
     c = await get_contact(session, user)

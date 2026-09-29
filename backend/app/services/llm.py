@@ -27,13 +27,27 @@ class PIILeakError(LLMError):
     pass
 
 
+class AINotConnected(LLMError):
+    """ИИ ещё не подключён (нет ключа). Сценарии показывают заглушку и идут дальше."""
+
+    def __init__(self, what: str = "Этот шаг"):
+        super().__init__(f"{what} работает на ИИ, а ИИ пока не подключён.")
+
+
+def available() -> bool:
+    s = get_settings()
+    return s.llm_enabled and bool(s.anthropic_api_key)
+
+
 _client: anthropic.AsyncAnthropic | None = None
 
 
 def client() -> anthropic.AsyncAnthropic:
     global _client
     if _client is None:
-        _client = anthropic.AsyncAnthropic()  # ключ из ANTHROPIC_API_KEY
+        s = get_settings()
+        http = anthropic.DefaultAsyncHttpxClient(proxy=s.llm_proxy_url) if s.llm_proxy_url else None
+        _client = anthropic.AsyncAnthropic(api_key=s.anthropic_api_key, http_client=http)
     return _client
 
 
@@ -47,8 +61,8 @@ async def structured(
     max_tokens: int = 32000,
 ) -> T:
     s = get_settings()
-    if not s.llm_enabled:
-        raise LLMError("LLM выключена настройкой LLM_ENABLED=false")
+    if not available():
+        raise AINotConnected()
     if has_pii(user):
         raise PIILeakError("В тексте для LLM остались контакты. Вызов заблокирован.")
 

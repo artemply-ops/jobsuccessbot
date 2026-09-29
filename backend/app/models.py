@@ -115,6 +115,7 @@ class VacancyScore(Base):
     vacancy_id: Mapped[int] = mapped_column(ForeignKey("vacancies.id"), index=True)
     profile_version: Mapped[int] = mapped_column(Integer)
     prefilter: Mapped[float] = mapped_column(default=0.0)
+    method: Mapped[str] = mapped_column(String(8), default="ai")  # ai | basic (без ИИ, по ключевым словам)
     score: Mapped[int | None] = mapped_column(Integer)  # None: не прошёл в топ, LLM не звали
     breakdown: Mapped[dict] = mapped_column(JSON, default=dict)
     pros: Mapped[list] = mapped_column(JSON, default=list)

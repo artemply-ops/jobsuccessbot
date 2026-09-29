@@ -7,7 +7,7 @@
 import json
 import re
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -69,6 +69,9 @@ industry (отрасль), money (деньги относительно ожид
 Верни оценку для каждой вакансии с её vacancy_id. Пиши по-русски."""
 
 
+BASIC_GAP = "ИИ-оценка пока не подключена: это предварительная оценка по совпадению ключевых слов"
+
+
 async def score_user(session: AsyncSession, user_id: int, vacancy_ids: list[int] | None = None) -> dict:
     s = get_settings()
     prof = (await session.execute(select(Profile).where(Profile.user_id == user_id)
@@ -76,6 +79,11 @@ async def score_user(session: AsyncSession, user_id: int, vacancy_ids: list[int]
     if prof is None:
         raise ValueError("Сначала соберите профиль")
     p = ProfileData.model_validate(prof.data)
+    use_ai = llm.available()
+    if use_ai:  # предварительные оценки без ИИ заменяем полноценными
+        await session.execute(delete(VacancyScore).where(
+            VacancyScore.user_id == user_id, VacancyScore.profile_version == prof.version,
+            VacancyScore.method == "basic"))
 
     q = select(Vacancy).where(Vacancy.active.is_(True))
     if vacancy_ids:
@@ -94,6 +102,16 @@ async def score_user(session: AsyncSession, user_id: int, vacancy_ids: list[int]
         candidates.append((prefilter_score(p, v), v))
     candidates.sort(key=lambda x: x[0], reverse=True)
     top = [(ps, v) for ps, v in candidates[: s.prefilter_top_n] if ps > 0]
+
+    if not use_ai:
+        basic = [(ps, v) for ps, v in candidates[:100] if ps > 0]
+        for ps, v in basic:
+            session.add(VacancyScore(user_id=user_id, vacancy_id=v.id, profile_version=prof.version, prefilter=ps,
+                                     method="basic", score=round(ps * 100), breakdown={},
+                                     pros=["Совпадает с целевой ролью"] if ps >= 0.3 else [], gaps=[BASIC_GAP]))
+        await session.commit()
+        return {"vacancies": len(vacancies), "filtered": filtered, "candidates": len(candidates),
+                "scored": len(basic), "method": "basic"}
 
     profile_text = profile_to_text(prof.data)
     scored = 0
@@ -126,6 +144,8 @@ SYSTEM_COMPANY = """Ты карьерный консультант. Оцени, 
 
 async def score_companies(session: AsyncSession, user_id: int) -> dict:
     s = get_settings()
+    if not llm.available():
+        return {"scored": 0, "skipped": "ИИ-оценка компаний пока не подключена"}
     prof = (await session.execute(select(Profile).where(Profile.user_id == user_id)
                                   .order_by(Profile.version.desc()).limit(1))).scalar_one_or_none()
     if prof is None:

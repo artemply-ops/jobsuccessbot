@@ -16,10 +16,9 @@ async def send_message(chat_id: int, text: str) -> bool:
     s = get_settings()
     if not s.telegram_bot_token:
         return False
-    from aiogram import Bot
-    from aiogram.client.default import DefaultBotProperties
+    from app.tg import make_bot
 
-    bot = Bot(s.telegram_bot_token, default=DefaultBotProperties(parse_mode="HTML"))
+    bot = make_bot()
     try:
         await bot.send_message(chat_id, text, disable_web_page_preview=True)
         return True
@@ -35,7 +34,7 @@ async def notify_new_matches(session: AsyncSession, user_id: int, limit: int = 5
     if user is None or not user.tg_id:
         return 0
     q = (select(VacancyScore, Vacancy).join(Vacancy, Vacancy.id == VacancyScore.vacancy_id)
-         .where(VacancyScore.user_id == user_id, VacancyScore.notified.is_(False),
+         .where(VacancyScore.user_id == user_id, VacancyScore.notified.is_(False), VacancyScore.method == "ai",
                 VacancyScore.score >= user.notify_threshold)
          .order_by(VacancyScore.score.desc()))
     rows = (await session.execute(q)).all()

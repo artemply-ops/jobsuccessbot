@@ -1,0 +1,45 @@
+# Сервер Timeweb (общий с другими проектами, 2 ГБ RAM).
+# Один контейнер app: API + PWA + бот в одном процессе (RUN_BOT_IN_API), чтобы не тратить память дважды.
+# Запуск: docker compose -f docker-compose.server.yml -p jobsuccess up -d --build
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: jobpilot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в .env}
+      POSTGRES_DB: jobpilot
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=30"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    mem_limit: 200m
+    restart: unless-stopped
+
+  app:
+    build: .
+    env_file: .env
+    environment:
+      ENV: prod
+      DATABASE_URL: postgresql+asyncpg://jobpilot:${POSTGRES_PASSWORD}@db:5432/jobpilot
+      FILES_DIR: /data/files
+      RUN_SCHEDULER: "true"
+      RUN_BOT_IN_API: "true"
+    volumes: [files:/data/files]
+    depends_on: [db]
+    mem_limit: 700m
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      DOMAIN: ${DOMAIN:?задайте DOMAIN в .env}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [app]
+    mem_limit: 100m
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  files:
+  caddy_data:

@@ -165,3 +165,52 @@ def test_export_blocks_unaccepted_letter_flags():
     with pytest.raises(export.FlagsNotAccepted):
         export.to_docx(pkg, None)
     assert export.to_docx(pkg, None, accept_flags=True)[:2] == b"PK"
+
+
+# ---------- Режим без ИИ ----------
+
+def test_parse_basic_profile():
+    from app.services.profile import parse_basic
+
+    p = parse_basic("Python-разработчик, Москва, 250 тыс, удалёнка")
+    assert p.target_roles == ["Python-разработчик"] and p.expectations.cities == ["Москва"]
+    assert p.expectations.salary_min == 250000 and p.expectations.formats == ["remote"]
+    with pytest.raises(ValueError):
+        parse_basic("  ")
+
+
+async def test_flow_without_ai(session):
+    """Без ключа ИИ: базовый профиль -> предварительная оценка -> заглушки на шагах с ИИ."""
+    import httpx
+    from sqlalchemy import select
+
+    from app.main import app
+    from app.models import User, VacancyScore
+    from app.services import llm, scoring
+    from app.services.profile import save_basic
+
+    assert not llm.available()
+    user = User(tg_id=777, consent_at=__import__("datetime").datetime.now())
+    session.add(user)
+    await session.flush()
+    await save_basic(session, user, "Python-разработчик, Москва")
+    await upsert(session, [RawVacancy("trudvsem", "a1", "Python-разработчик", "Ромашка", "https://x/1", city="Москва"),
+                           RawVacancy("trudvsem", "a2", "Бухгалтер", "Лютик", "https://x/2", city="Москва")])
+    res = await scoring.score_user(session, user.id)
+    assert res["method"] == "basic" and res["scored"] == 1
+    sc = (await session.execute(select(VacancyScore).where(VacancyScore.user_id == user.id))).scalars().one()
+    assert sc.method == "basic" and sc.score > 0
+    assert (await scoring.score_companies(session, user.id))["scored"] == 0
+    with pytest.raises(llm.AINotConnected):
+        await llm.structured(schema=type(p := None) if False else __import__("app.schemas", fromlist=["FactCheck"]).FactCheck,
+                             system="s", user="u")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        tok = (await c.post("/api/auth/dev")).json()["token"]
+        h = {"Authorization": f"Bearer {tok}"}
+        assert (await c.get("/api/config")).json()["ai"] is False
+        await c.post("/api/me/consent", headers=h)
+        assert (await c.post("/api/profile/build", json={}, headers=h)).json()["stub"] is True
+        assert (await c.post("/api/vacancies/1/package", json={}, headers=h)).json()["stub"] is True
+        r = await c.post("/api/sources/voice", files={"file": ("v.ogg", b"x")}, headers=h)
+        assert r.status_code == 422 and "не подключено" in r.json()["detail"]

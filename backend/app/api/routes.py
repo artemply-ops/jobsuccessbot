@@ -14,8 +14,9 @@ from app.db import get_session
 from app.models import (Company, CompanyScore, CompanySubscription, Contact, Job, Package, Source, User, Vacancy,
                         VacancyScore)
 from app.schemas import ProfileData
-from app.services import collect, export, profile
+from app.services import collect, export, llm, profile
 from app.services.stt import STTError, transcribe_any
+from app.services.stt import available as stt_available
 
 api = APIRouter(prefix="/api")
 MAX_UPLOAD = 15 * 1024 * 1024
@@ -61,7 +62,8 @@ async def auth_dev(session: AsyncSession = Depends(get_session)):
 @api.get("/config")
 async def public_config():
     s = get_settings()
-    return {"bot_username": s.telegram_bot_username, "dev_login": s.env == "dev"}
+    return {"bot_username": s.telegram_bot_username, "dev_login": s.env == "dev",
+            "ai": llm.available(), "voice": stt_available()}
 
 
 # ---------- Пользователь ----------
@@ -160,6 +162,8 @@ async def add_text(body: TextIn, user: User = Depends(current_user), session: As
 async def add_voice(file: UploadFile = File(...), user: User = Depends(current_user),
                     session: AsyncSession = Depends(get_session)):
     _need_consent(user)
+    if not stt_available():
+        raise HTTPException(422, "Распознавание голоса пока не подключено. Напишите то же самое текстом.")
     data = await file.read()
     try:
         text = await transcribe_any(data)
@@ -198,6 +202,8 @@ class BuildIn(BaseModel):
 @api.post("/profile/build")
 async def build(body: BuildIn, user: User = Depends(current_user)):
     _need_consent(user)
+    if not llm.available():
+        return {"stub": True, "message": str(llm.AINotConnected("Сборка профиля из резюме"))}
     return {"job_id": await jobs.enqueue("profile", user.id, jobs.build_profile_job(user.id, body.source_ids))}
 
 
@@ -214,11 +220,24 @@ async def put_profile(body: ProfileIn, user: User = Depends(current_user),
     return {"version": p.version, "confirmed": p.confirmed}
 
 
+@api.post("/profile/basic")
+async def basic_profile(body: TextIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    _need_consent(user)
+    try:
+        p = await profile.save_basic(session, user, body.text)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    await session.commit()
+    return {"version": p.version}
+
+
 @api.post("/profile/answers")
 async def answers(body: TextIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     _need_consent(user)
     src = await profile.add_text_source(session, user, body.text)
     await session.commit()
+    if not llm.available():
+        return {"stub": True, "message": str(llm.AINotConnected("Обновление профиля"))}
     return {"job_id": await jobs.enqueue("profile", user.id, jobs.build_profile_job(user.id, [src.id]))}
 
 
@@ -248,7 +267,7 @@ def _vac(v: Vacancy, sc: VacancyScore | None) -> dict:
             "currency": v.currency, "url": v.url, "sources": [s["source"] for s in v.sources],
             "published_at": v.published_at,
             "score": sc.score if sc else None, "breakdown": sc.breakdown if sc else {},
-            "pros": sc.pros if sc else [], "gaps": sc.gaps if sc else []}
+            "pros": sc.pros if sc else [], "gaps": sc.gaps if sc else [], "method": sc.method if sc else None}
 
 
 @api.get("/vacancies")
@@ -365,6 +384,8 @@ class PackageIn(BaseModel):
 @api.post("/vacancies/{vacancy_id}/package")
 async def make_package(vacancy_id: int, body: PackageIn, user: User = Depends(current_user)):
     _need_consent(user)
+    if not llm.available():
+        return {"stub": True, "message": str(llm.AINotConnected("Генерация CV и сопроводительного письма"))}
     return {"job_id": await jobs.enqueue("package", user.id, jobs.package_job(user.id, vacancy_id, body.instruction))}
 
 

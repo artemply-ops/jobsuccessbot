@@ -5,7 +5,7 @@ import { api, waitJob } from "../api";
 export type Vac = {
   id: number; title: string; company_name: string; city: string | null; remote: boolean | null;
   salary_from: number | null; salary_to: number | null; currency: string | null; url: string; sources: string[];
-  score: number | null; breakdown: Record<string, number>; pros: string[]; gaps: string[];
+  score: number | null; method: string | null; breakdown: Record<string, number>; pros: string[]; gaps: string[];
 };
 
 export const money = (v: Vac) =>
@@ -17,11 +17,12 @@ export const scoreClass = (s: number | null) => (s == null ? "" : s >= 75 ? "hi"
 
 export default function VacanciesPage() {
   const [items, setItems] = useState<Vac[]>([]);
-  const [minScore, setMinScore] = useState(50);
+  const [minScore, setMinScore] = useState(0);
   const [remote, setRemote] = useState(false);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
+  const [note, setNote] = useState("");
 
   const load = useCallback(async () => {
     const params = new URLSearchParams({ min_score: String(minScore) });
@@ -41,7 +42,8 @@ export default function VacanciesPage() {
       setBusy("");
       setErr("");
       await load();
-      alert(`Новых вакансий: ${r.collect.created}, оценено: ${r.score.scored}, отсеяно фильтрами: ${r.score.filtered}`);
+      setNote(`Новых вакансий: ${r.collect.created}, оценено: ${r.score.scored}, отсеяно фильтрами: ${r.score.filtered}.` +
+        (r.score.method === "basic" ? " 🤖 Точная ИИ-оценка пока не подключена, показана предварительная по совпадению с должностью." : ""));
     } catch (e: any) {
       setErr(e.message);
       setBusy("");
@@ -52,6 +54,7 @@ export default function VacanciesPage() {
     <div className="stack">
       {busy && <div className="banner">{busy}</div>}
       {err && <div className="banner error">{err}</div>}
+      {note && <div className="banner">{note}</div>}
       <div className="row gap wrap">
         <button className="btn" onClick={search} disabled={!!busy}>Найти вакансии</button>
         <input className="grow" placeholder="Поиск по названию или компании" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -65,13 +68,15 @@ export default function VacanciesPage() {
       {items.length === 0 && !busy && <p className="muted">Пока пусто. Соберите профиль и нажмите «Найти вакансии».</p>}
       {items.map((v) => (
         <Link to={`/vacancies/${v.id}`} key={v.id} className="card vac">
-          <div className={`score ${scoreClass(v.score)}`}>{v.score ?? "—"}</div>
+          <div className={`score ${scoreClass(v.score)}`} title={v.method === "basic" ? "предварительная оценка без ИИ" : ""}>
+            {v.score ?? "—"}{v.method === "basic" && <sup>*</sup>}
+          </div>
           <div className="grow stack small-gap">
             <strong>{v.title}</strong>
             <span className="muted">{v.company_name} · {v.city || "город не указан"}{v.remote ? " · удалёнка" : ""}</span>
             {money(v) && <span>{money(v)}</span>}
             {v.pros[0] && <span className="small">✅ {v.pros[0]}</span>}
-            {v.gaps[0] && <span className="small">⚠️ {v.gaps[0]}</span>}
+            {v.gaps[0] && v.method !== "basic" && <span className="small">⚠️ {v.gaps[0]}</span>}
           </div>
         </Link>
       ))}

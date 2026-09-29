@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, upload, waitJob } from "../api";
+import { api, getConfig, upload, waitJob, type Cfg } from "../api";
 import type { Me } from "../App";
 
 type Source = { id: number; kind: string; filename: string | null; status: string; error: string | null; preview: string };
@@ -24,6 +24,9 @@ export default function ProfilePage({ me, onMeChange }: { me: Me; onMeChange: ()
   const [text, setText] = useState("");
   const [answer, setAnswer] = useState("");
   const [edit, setEdit] = useState<ProfileData | null>(null);
+  const [cfg, setCfg] = useState<Cfg | null>(null);
+  const [basic, setBasic] = useState("");
+  useEffect(() => { getConfig().then(setCfg).catch(() => {}); }, []);
 
   const load = useCallback(async () => {
     const [s, p] = await Promise.all([api<Source[]>("/sources"), api<Profile | null>("/profile")]);
@@ -51,14 +54,20 @@ export default function ProfilePage({ me, onMeChange }: { me: Me; onMeChange: ()
     });
 
   const build = () => run("Собираю профиль, до минуты…", async () => {
-    const { job_id } = await api("/profile/build", { method: "POST", json: {} });
-    await waitJob(job_id);
+    const r = await api("/profile/build", { method: "POST", json: {} });
+    if (r.stub) throw new Error(r.message);
+    await waitJob(r.job_id);
   });
 
   const sendAnswer = () => run("Обновляю профиль…", async () => {
-    const { job_id } = await api("/profile/answers", { method: "POST", json: { text: answer } });
-    await waitJob(job_id);
+    const r = await api("/profile/answers", { method: "POST", json: { text: answer } });
     setAnswer("");
+    if (!r.stub) await waitJob(r.job_id);
+  });
+
+  const saveBasic = () => run("Сохраняю…", async () => {
+    await api("/profile/basic", { method: "POST", json: { text: basic } });
+    setBasic("");
   });
 
   const save = (confirm: boolean) => edit && run("Сохраняю…", async () => {
@@ -78,7 +87,8 @@ export default function ProfilePage({ me, onMeChange }: { me: Me; onMeChange: ()
           Загрузить файлы
           <input type="file" multiple accept=".pdf,.docx,.txt,.md" onChange={(e) => onFiles(e.target.files)} hidden />
         </label>
-        <VoiceRecorder onDone={(blob, name) => run("Распознаю голос…", () => upload("/sources/voice", blob, name))} />
+        {cfg?.voice && <VoiceRecorder onDone={(blob, name) => run("Распознаю голос…", () => upload("/sources/voice", blob, name))} />}
+        {cfg && !cfg.voice && <p className="muted small">🎙 Распознавание голоса пока не подключено, напишите текстом.</p>}
         <textarea rows={3} placeholder="Или напишите о себе: чем занимались, чего хотите, что важно" value={text}
           onChange={(e) => setText(e.target.value)} />
         <button className="btn secondary" disabled={!text.trim()}
@@ -97,10 +107,23 @@ export default function ProfilePage({ me, onMeChange }: { me: Me; onMeChange: ()
             ))}
           </ul>
         )}
-        <button className="btn" disabled={!sources.some((s) => s.status === "parsed") || !!busy} onClick={build}>
-          {profile ? "Пересобрать профиль по всем материалам" : "Собрать профиль"}
-        </button>
+        {cfg?.ai ? (
+          <button className="btn" disabled={!sources.some((s) => s.status === "parsed") || !!busy} onClick={build}>
+            {profile ? "Пересобрать профиль по всем материалам" : "Собрать профиль"}
+          </button>
+        ) : cfg && (
+          <div className="banner">🤖 Сборка профиля из резюме работает на ИИ, а ИИ пока не подключён. Материалы сохранятся, профиль по ним соберём после подключения.</div>
+        )}
       </section>
+
+      {cfg && !cfg.ai && (
+        <section className="card stack">
+          <h2>Быстрый профиль для поиска</h2>
+          <p className="muted small">Должность и город, можно зарплату и формат, через запятую.</p>
+          <input placeholder="Python-разработчик, Москва, 250000, удалёнка" value={basic} onChange={(e) => setBasic(e.target.value)} />
+          <button className="btn" disabled={!basic.trim() || !!busy} onClick={saveBasic}>Сохранить и перейти к поиску</button>
+        </section>
+      )}
 
       <Contacts me={me} onSaved={onMeChange} />
 

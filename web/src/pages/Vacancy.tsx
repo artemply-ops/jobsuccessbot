@@ -35,8 +35,9 @@ export default function VacancyPage() {
     setBusy("Собираю досье компании и пишу CV с письмом. Обычно 1-2 минуты…");
     setErr("");
     try {
-      const { job_id } = await api(`/vacancies/${id}/package`, { method: "POST", json: { instruction: instr || null } });
-      const j = await waitJob(job_id);
+      const r = await api(`/vacancies/${id}/package`, { method: "POST", json: { instruction: instr || null } });
+      if (r.stub) throw new Error(`🤖 ${r.message} Пока можно откликнуться своим резюме по ссылке «Открыть у источника».`);
+      const j = await waitJob(r.job_id);
       setPkg(await api<Pkg>(`/packages/${j.result.package_id}`));
       setInstruction("");
       await load();

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import ROOT
 from app.models import Company, Vacancy
 from app.schemas import ProfileData
+from app.services import llm
 from app.services.pii import EMAIL_RE, PHONE_RE
 from app.services.sources import careers, superjob, trudvsem
 from app.services.sources.base import RawVacancy, fingerprint, norm
@@ -99,6 +100,9 @@ async def collect_companies(session: AsyncSession, only_ids: list[int] | None = 
             elif comp.ats_type == "jsonld":
                 raws = await careers.fetch_jsonld(comp.careers_url, comp.name)
             elif comp.ats_type == "html":
+                if not llm.available():  # разбор нестандартных страниц требует ИИ
+                    stats["skipped_no_ai"] = stats.get("skipped_no_ai", 0) + 1
+                    continue
                 raws = await careers.fetch_html_llm(comp.careers_url, comp.name)
             else:
                 continue

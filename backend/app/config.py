@@ -26,11 +26,17 @@ class Settings(BaseSettings):
     telegram_bot_username: str = ""
     admin_tg_ids: list[int] = []  # доступ к /api/admin/*
     run_scheduler: bool = False  # ежедневное обновление каталога и вакансий в процессе API
+    run_bot_in_api: bool = False  # бот в том же процессе, что и API: экономия памяти на маленьком сервере
+    # Telegram из РФ ходит через прокси (socks5://... или http://...)
+    proxy_url: str = ""
 
     # LLM. Во внешнюю модель уходит только обезличенный текст (см. services/pii.py)
+    anthropic_api_key: str = ""  # пусто: ИИ не подключён, этапы с ИИ отдают заглушку
     anthropic_model_main: str = "claude-opus-5"  # профиль, досье, CV и письмо
     anthropic_model_scoring: str = "claude-sonnet-5"  # массовый скоринг вакансий
     llm_enabled: bool = True
+    # API Claude недоступен с российских IP: запросы через зарубежный прокси
+    llm_proxy_url: str = ""
 
     # Распознавание речи: голос это ПДн, поэтому только российский провайдер или локально
     stt_provider: str = "yandex"  # yandex | none

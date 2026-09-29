@@ -17,6 +17,14 @@ class STTError(RuntimeError):
     pass
 
 
+STUB = "Распознавание голоса пока не подключено. Напишите то же самое текстом, я всё сохраню."
+
+
+def available() -> bool:
+    s = get_settings()
+    return s.stt_provider == "yandex" and bool(s.yandex_api_key)
+
+
 def to_ogg_opus(data: bytes) -> tuple[bytes, float]:
     """Любой аудиоформат браузера (webm, mp4, ogg) -> OGG/Opus 48 кГц моно. Возвращает (байты, длительность)."""
     import io
@@ -49,8 +57,8 @@ async def transcribe_any(data: bytes) -> str:
 
 async def transcribe_ogg(data: bytes, duration_sec: int | None = None) -> str:
     s = get_settings()
-    if s.stt_provider != "yandex" or not s.yandex_api_key:
-        raise STTError("Распознавание речи не настроено. Пока пришлите текстом.")
+    if not available():
+        raise STTError(STUB)
     if len(data) > MAX_BYTES or (duration_sec and duration_sec > 30):
         raise STTError("Голосовое длиннее 30 секунд. Разбейте на несколько коротких.")
     params = {"lang": "ru-RU", "format": "oggopus"}
