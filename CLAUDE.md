@@ -30,6 +30,7 @@ SSH: `ssh -i ~/.ssh/id_ed25519_tihoeslovo_deploy deploy@201.24.55.219`. Соед
 - HTTPS: Caddy, домен `201-24-55-219.sslip.io` (временный, заменить на свой)
 - Telegram и Claude API из РФ через прокси `PROXY_URL` / `LLM_PROXY_URL` (тот же, что у «Тихого слова»)
 - Бот: @job_success_bot. Админ: tg 52622104
+- Секреты: владелец вводит сам `.\scripts\set_secret.ps1 КЛЮЧ` (PowerShell) или `bash scripts/set_secret.sh КЛЮЧ` (Git Bash). Ввод скрыт, значение идёт через stdin SSH, app перезапускается. Секреты в чат не просим
 - Деплой: push в GitHub `artemply-ops/jobsuccessbot` → на сервере `git pull` → `up -d --build app`
 
 ## Режим без ИИ
