@@ -80,7 +80,7 @@ async def get_dossier(session: AsyncSession, vacancy: Vacancy) -> dict:
 
     site, used = await _site_text(company.domain) if company else ("", [])
     res = await llm.structured(
-        schema=DossierData, system=SYSTEM_DOSSIER, effort="low", max_tokens=8000,
+        schema=DossierData, system=SYSTEM_DOSSIER, effort="low", max_tokens=4000,
         user=f"Компания: {vacancy.company_name}\n\nТексты с сайта:\n{site or '(сайт недоступен или неизвестен)'}"
              f"\n\nВакансия:\n{vacancy.title}\n{vacancy.description[:5000]}",
     )
@@ -118,7 +118,7 @@ async def build_package(session: AsyncSession, user_id: int, vacancy_id: int,
 
     draft = await llm.structured(schema=PackageDraft, system=SYSTEM_PACKAGE, user=user_msg, effort="high")
     check = await llm.structured(
-        schema=FactCheck, system=SYSTEM_FACTCHECK, effort="medium", max_tokens=8000,
+        schema=FactCheck, system=SYSTEM_FACTCHECK, effort="medium", max_tokens=4000,
         user=f"ПРОФИЛЬ:\n{profile_text}\n\nТЕКСТЫ ДЛЯ ПРОВЕРКИ:\n{draft.model_dump_json()}",
     )
     pkg = Package(user_id=user_id, vacancy_id=vacancy_id, version=(prev.version + 1) if prev else 1,

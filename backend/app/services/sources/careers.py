@@ -239,7 +239,7 @@ async def fetch_html_llm(careers_url: str, company_name: str) -> list[RawVacancy
     text = EMAIL_RE.sub("[EMAIL]", PHONE_RE.sub("[PHONE]", text))
     links = EMAIL_RE.sub("[EMAIL]", links)
     res = await llm.structured(
-        schema=_HtmlVacancies, model=get_settings().llm_model_scoring, effort="low", max_tokens=8000,
+        schema=_HtmlVacancies, model=get_settings().llm_model_scoring, effort="low", max_tokens=6000,
         system="Выдели из страницы карьерного раздела список открытых вакансий. Только реальные вакансии, "
                "без навигации и общих разделов. Если вакансий нет, верни пустой список. "
                "Не выписывай телефоны, email и имена людей.",

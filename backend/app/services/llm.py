@@ -87,7 +87,7 @@ async def structured(
     user: str,
     model: str | None = None,
     effort: str = "medium",
-    max_tokens: int = 32000,
+    max_tokens: int = 12000,  # OpenRouter резервирует оплату под максимум: не завышать
 ) -> T:
     s = get_settings()
     if not available():
@@ -113,7 +113,8 @@ async def structured(
         if r.status_code == 401:
             raise LLMError("LLM API отклонил ключ (401)")
         if r.status_code == 402:
-            raise LLMError("На балансе OpenRouter закончились средства (402)")
+            log.error("LLM 402: %s", r.text[:300])
+            raise LLMError("На балансе OpenRouter не хватает средств на этот запрос (402). Пополните баланс.")
         if r.status_code == 429:
             raise LLMError("Превышен лимит запросов к LLM, повторите позже")
         if r.status_code >= 400:
