@@ -41,7 +41,8 @@ cd $DIR
 git fetch -q origin main && git reset -q --hard origin/main
 test "\$(git rev-parse --short HEAD)" = "$REV" || { echo "на сервере не тот коммит"; exit 1; }
 rm -rf web/dist && tar -C web -xzf /tmp/jsb-dist.tgz && rm -f /tmp/jsb-dist.tgz
-nohup sh -c 'C="docker compose -f docker-compose.server.yml -p jobsuccess"; \$C stop app; \$C build -q app && \$C up -d app; echo EXIT=\$? ' > /tmp/jsb-build.log 2>&1 </dev/null &
+# При неудачной сборке app поднимается на прежнем образе: бот не остаётся выключенным
+nohup sh -c 'C="docker compose -f docker-compose.server.yml -p jobsuccess"; \$C stop app; if \$C build -q app; then \$C up -d app; echo EXIT=0; else \$C up -d --no-build app; echo "EXIT=1 (сборка упала, app поднят на прежнем образе)"; fi' > /tmp/jsb-build.log 2>&1 </dev/null &
 echo "  сборка запущена на сервере, коммит $REV"
 EOS
 

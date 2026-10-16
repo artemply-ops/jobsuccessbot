@@ -75,7 +75,8 @@ def client() -> httpx.AsyncClient:
             proxy = "socks5h://" + proxy[len("socks5://"):]
         _client = httpx.AsyncClient(
             base_url=s.llm_base_url, timeout=httpx.Timeout(300, connect=20), proxy=proxy,
-            headers={"Authorization": f"Bearer {s.llm_api_key}", "HTTP-Referer": s.public_url, "X-Title": "JobPilot"})
+            headers={"HTTP-Referer": s.public_url, "X-Title": "JobPilot",
+                     **({"Authorization": f"Bearer {s.llm_api_key}"} if s.llm_api_key else {})})
     return _client
 
 
