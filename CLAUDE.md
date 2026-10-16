@@ -21,7 +21,7 @@ MVP: блок 1 (профиль кандидата), блок 2 (поиск и �
 - В CV нельзя выдуманных фактов: проверка фактов (`SYSTEM_FACTCHECK`) обязательна для каждого пакета.
 
 ## Сервер
-Timeweb, Москва, `201.24.55.219`, общий с «Тихим словом» и другими ботами (2 ГБ RAM, память беречь).
+Timeweb, Москва, `201.24.55.219`, общий с «Тихим словом» и другими ботами (4 ГБ RAM + swap 2 ГБ, память беречь).
 SSH: `ssh -i ~/.ssh/id_ed25519_tihoeslovo_deploy deploy@201.24.55.219`. Соединение часто рвётся:
 каждую команду в цикл повтора `while :; do ssh ...; rc=$?; [ $rc -ne 255 ] && break; sleep 8; done`, в фоне.
 - Код: `/opt/jobsuccessbot`, секреты в `/opt/jobsuccessbot/.env` (только на сервере, chmod 600)
@@ -32,7 +32,8 @@ SSH: `ssh -i ~/.ssh/id_ed25519_tihoeslovo_deploy deploy@201.24.55.219`. Соед
   OpenRouter с российского IP отдаёт 403. Прокси нужен с DNS на его стороне (socks5h), адаптер переводит сам
 - Бот: @job_success_bot. Админ: tg 52622104
 - Секреты: владелец вводит сам `scripts\set_secret.cmd КЛЮЧ` (PowerShell или cmd; .ps1 запрещены политикой) или `bash scripts/set_secret.sh КЛЮЧ` (Git Bash). Ввод скрыт, значение идёт через stdin SSH, app перезапускается. Секреты в чат не просим
-- Деплой: push в GitHub `artemply-ops/jobsuccessbot` → на сервере `git pull` → `up -d --build app`
+- Деплой ТОЛЬКО `bash scripts/deploy.sh`: фронтенд собирается локально, на сервере образ из `Dockerfile.server`
+  при остановленном app. Не запускать `up --build` на сервере с работающим app: 16.10.2026 это повесило сервер (OOM)
 
 ## LLM
 OpenRouter, OpenAI-совместимый API, ответ строго по JSON-схеме. Модели в `.env`: `LLM_MODEL_MAIN`
