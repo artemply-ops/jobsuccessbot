@@ -14,7 +14,9 @@ services:
     restart: unless-stopped
 
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.server
     env_file: .env
     environment:
       ENV: prod
