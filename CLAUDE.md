@@ -31,7 +31,7 @@ SSH: `ssh -i ~/.ssh/id_ed25519_tihoeslovo_deploy deploy@201.24.55.219`. Соед
 - Telegram и OpenRouter из РФ через прокси `PROXY_URL` / `LLM_PROXY_URL` (тот же, что у «Тихого слова», выход DE).
   OpenRouter с российского IP отдаёт 403. Прокси нужен с DNS на его стороне (socks5h), адаптер переводит сам
 - Бот: @job_success_bot. Админ: tg 52622104
-- Секреты: владелец вводит сам `scripts\set_secret.cmd КЛЮЧ` (PowerShell или cmd; .ps1 запрещены политикой) или `bash scripts/set_secret.sh КЛЮЧ` (Git Bash). Ввод скрыт, значение идёт через stdin SSH, app перезапускается. Секреты в чат не просим
+- Секреты: владелец вводит сам `.\scripts\set_secret.cmd КЛЮЧ` (PowerShell, префикс `.\` обязателен; .ps1 запрещены политикой) или `bash scripts/set_secret.sh КЛЮЧ` (Git Bash). Ввод скрыт, значение идёт через stdin SSH, app перезапускается. Секреты в чат не просим
 - Деплой ТОЛЬКО `bash scripts/deploy.sh`: фронтенд собирается локально, на сервере образ из `Dockerfile.server`
   при остановленном app. Не запускать `up --build` на сервере с работающим app: 16.10.2026 это повесило сервер (OOM)
 
