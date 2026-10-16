@@ -122,7 +122,7 @@ async def score_user(session: AsyncSession, user_id: int, vacancy_ids: list[int]
             f"{'да' if v.remote else 'неизвестно' if v.remote is None else 'нет'}; зарплата: "
             f"{v.salary_from or '?'}–{v.salary_to or '?'} {v.currency or ''}\n{(v.description or '')[:3500]}\n</vacancy>"
             for _, v in chunk)
-        res = await llm.structured(schema=VacancyAssessments, system=SYSTEM_SCORE, model=s.anthropic_model_scoring,
+        res = await llm.structured(schema=VacancyAssessments, system=SYSTEM_SCORE, model=s.llm_model_scoring,
                                    effort="low", max_tokens=16000,
                                    user=f"Профиль кандидата:\n{profile_text}\n\nВакансии:\n{vac_text}")
         by_id = {a.vacancy_id: a for a in res.items}
@@ -159,7 +159,7 @@ async def score_companies(session: AsyncSession, user_id: int) -> dict:
         chunk = comps[i:i + 40]
         lst = json.dumps([{"company_id": c.id, "name": c.name, "segments": c.segments, "about": c.description}
                           for c in chunk], ensure_ascii=False)
-        res = await llm.structured(schema=CompanyFits, system=SYSTEM_COMPANY, model=s.anthropic_model_scoring,
+        res = await llm.structured(schema=CompanyFits, system=SYSTEM_COMPANY, model=s.llm_model_scoring,
                                    effort="low", max_tokens=16000,
                                    user=f"Профиль кандидата:\n{profile_text}\n\nКомпании:\n{lst}")
         ids = {c.id for c in chunk}

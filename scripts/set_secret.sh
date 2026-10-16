@@ -5,7 +5,7 @@
 # приложение перезапускается и печатается только статус. Значение нигде не выводится.
 set -u
 
-ALLOWED="TELEGRAM_BOT_TOKEN YANDEX_API_KEY YANDEX_FOLDER_ID SUPERJOB_APP_ID ANTHROPIC_API_KEY LLM_API_KEY LLM_FOLDER_ID"
+ALLOWED="TELEGRAM_BOT_TOKEN YANDEX_API_KEY YANDEX_FOLDER_ID SUPERJOB_APP_ID LLM_API_KEY"
 KEY="${1:-}"
 if [ -z "$KEY" ] || ! grep -qw -- "$KEY" <<<"$ALLOWED"; then
   echo "Использование: bash scripts/set_secret.sh КЛЮЧ"

@@ -30,12 +30,13 @@ class Settings(BaseSettings):
     # Telegram из РФ ходит через прокси (socks5://... или http://...)
     proxy_url: str = ""
 
-    # LLM. Во внешнюю модель уходит только обезличенный текст (см. services/pii.py)
-    anthropic_api_key: str = ""  # пусто: ИИ не подключён, этапы с ИИ отдают заглушку
-    anthropic_model_main: str = "claude-opus-5"  # профиль, досье, CV и письмо
-    anthropic_model_scoring: str = "claude-sonnet-5"  # массовый скоринг вакансий
+    # LLM через OpenRouter. Во внешнюю модель уходит только обезличенный текст (см. services/pii.py)
+    llm_api_key: str = ""  # ключ OpenRouter; пусто: ИИ не подключён, этапы с ИИ отдают заглушку
+    llm_base_url: str = "https://openrouter.ai/api/v1"
+    llm_model_main: str = "anthropic/claude-sonnet-5.5"  # профиль, досье, CV и письмо
+    llm_model_scoring: str = "anthropic/claude-haiku-5.5"  # массовый скоринг вакансий и разбор страниц
     llm_enabled: bool = True
-    # API Claude недоступен с российских IP: запросы через зарубежный прокси
+    # Если провайдер недоступен с российских IP: запросы через зарубежный прокси
     llm_proxy_url: str = ""
 
     # Распознавание речи: голос это ПДн, поэтому только российский провайдер или локально

@@ -214,3 +214,56 @@ async def test_flow_without_ai(session):
         assert (await c.post("/api/vacancies/1/package", json={}, headers=h)).json()["stub"] is True
         r = await c.post("/api/sources/voice", files={"file": ("v.ogg", b"x")}, headers=h)
         assert r.status_code == 422 and "не подключено" in r.json()["detail"]
+
+
+# ---------- OpenRouter ----------
+
+def test_strict_schema_all_required_no_extra():
+    from app.schemas import ProfileExtraction
+    from app.services.llm import strict_schema
+
+    sch = strict_schema(ProfileExtraction)
+
+    def walk(n):
+        if isinstance(n, dict):
+            assert "default" not in n
+            if n.get("type") == "object" and "properties" in n:
+                assert n["additionalProperties"] is False and set(n["required"]) == set(n["properties"])
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(sch)
+    assert "$defs" in sch and "Expectations" in sch["$defs"]
+
+
+async def test_structured_parses_openrouter_response(monkeypatch):
+    """Ответ OpenRouter разбирается в схему; нарушение схемы -> повтор -> понятная ошибка."""
+    import httpx
+
+    from app.config import get_settings
+    from app.schemas import FactCheck
+    from app.services import llm
+
+    calls = []
+
+    def handler(req: httpx.Request):
+        body = __import__("json").loads(req.content)
+        calls.append(body)
+        assert body["response_format"]["json_schema"]["strict"] is True
+        assert body["provider"]["require_parameters"] is True
+        content = '{"flags": []}' if len(calls) == 1 else "not json"
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": content}}]})
+
+    monkeypatch.setattr(get_settings(), "llm_api_key", "test-key")
+    monkeypatch.setattr(get_settings(), "llm_enabled", True)
+    monkeypatch.setattr(llm, "_client", httpx.AsyncClient(base_url="https://or.test", transport=httpx.MockTransport(handler)))
+    res = await llm.structured(schema=FactCheck, system="s", user="текст без контактов")
+    assert res.flags == [] and calls[0]["model"] == get_settings().llm_model_main
+    with pytest.raises(llm.LLMError, match="не по схеме"):
+        await llm.structured(schema=FactCheck, system="s", user="ещё")
+    with pytest.raises(llm.PIILeakError):
+        await llm.structured(schema=FactCheck, system="s", user="пишите на a@b.ru")
+    monkeypatch.setattr(llm, "_client", None)
