@@ -127,31 +127,55 @@ def page_from_html(html: str, url: str) -> Page:
     return Page(url=url, text=root.get_text("\n", strip=True), title=title)
 
 
+class PageUnreadable(IntakeError):
+    """Страницу прочитать нельзя. reason: простыми словами почему; дальше просим вставить текст вакансии."""
+
+    def __init__(self, code: str, reason: str):
+        self.code, self.reason = code, reason
+        super().__init__(f"Не получилось прочитать страницу: {reason} Скопируйте текст вакансии и вставьте его сюда.")
+
+
 async def fetch_page(url: str) -> Page:
     url = normalize_url(url)
     if is_hh(url):
-        raise IntakeError("Ссылки hh.ru я не открываю: их условия запрещают автоматическое чтение. "
-                          "Скопируйте текст вакансии и пришлите его сообщением.")
+        raise PageUnreadable("hh", "ссылки hh.ru я не открываю, их правила запрещают автоматическое чтение.")
     s = get_settings()
     async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": s.http_user_agent}) as c:
         try:
             if not await allowed(c, url):
-                raise IntakeError("Сайт запрещает автоматическое чтение этой страницы (robots.txt). "
-                                  "Вставьте текст вакансии сообщением.")
+                raise PageUnreadable("robots", "сайт запрещает программам читать эту страницу.")
             r = await c.get(url)
+        except httpx.TimeoutException as e:
+            raise PageUnreadable("timeout", "сайт не ответил за 20 секунд.") from e
         except httpx.HTTPError as e:
-            raise IntakeError(f"Страница не открылась ({type(e).__name__}). Вставьте текст вакансии сообщением.") from e
+            log.info("fetch_page %s: %s", _host(url), type(e).__name__)
+            raise PageUnreadable("unreachable", "сайт недоступен или адрес с ошибкой.") from e
     if is_hh(str(r.url)):
-        raise IntakeError("Ссылка ведёт на hh.ru, такие страницы я не открываю. Пришлите текст вакансии сообщением.")
+        raise PageUnreadable("hh", "ссылка ведёт на hh.ru, такие страницы я не открываю.")
+    if r.status_code in (401, 403):
+        raise PageUnreadable("closed", "сайт закрыл страницу от программ или просит войти.")
+    if r.status_code == 404:
+        raise PageUnreadable("not_found", "страница не найдена, возможно, вакансию уже закрыли.")
     if r.status_code != 200:
-        raise IntakeError(f"Страница ответила кодом {r.status_code}. Вставьте текст вакансии сообщением.")
+        raise PageUnreadable("status", f"сайт ответил ошибкой {r.status_code}.")
     if "html" not in r.headers.get("content-type", "") or len(r.content) > MAX_PAGE_BYTES:
-        raise IntakeError("По ссылке не веб-страница. Вставьте текст вакансии сообщением.")
+        raise PageUnreadable("not_html", "по ссылке не веб-страница, а файл.")
     page = page_from_html(r.text, str(r.url))
     if len(page.text) < 200:  # страница рисуется скриптами: текста в HTML нет
-        raise IntakeError("На странице почти нет текста: скорее всего, её показывает скрипт. "
-                          "Вставьте текст вакансии сообщением.")
+        raise PageUnreadable("js", "текст вакансии на этой странице показывается скриптом, программа его не видит.")
     return page
+
+
+async def check_url(url: str) -> dict:
+    """Отдельная проверка ссылки до разбора: читается ли страница. Без LLM, только загрузка."""
+    try:
+        page = await fetch_page(url)
+    except PageUnreadable as e:
+        return {"ok": False, "code": e.code, "reason": e.reason, "message": str(e)}
+    except IntakeError as e:
+        return {"ok": False, "code": "bad_url", "reason": str(e), "message": str(e)}
+    return {"ok": True, "title": (page.title or "")[:200], "company": page.company_name, "chars": len(page.text),
+            "jobposting": bool(page.jsonld)}
 
 
 def basic_parse(text: str, page: Page | None = None) -> VacancyParsed:

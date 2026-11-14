@@ -39,6 +39,7 @@ class CV(StatesGroup):
     scheme = State()
     photo = State()
     revise = State()
+    name = State()
 
 
 def is_url(text: str) -> bool:
@@ -165,13 +166,116 @@ async def on_materials_done(cb: CallbackQuery, state: FSMContext):
         await cb.message.answer("Пока нет ни одного материала. Пришлите резюме файлом или расскажите о себе.")
         return
     if llm.available():
-        await cb.message.answer("Собираю ваш профиль из материалов, это до минуты…")
         try:
-            await _run(build_profile_job(user.id))  # по всем материалам: новый файл мог заменить старое резюме
+            async with working(cb.message, STAGES_PROFILE):
+                await _run(build_profile_job(user.id))  # по всем материалам: новый файл мог заменить старое резюме
         except Exception as e:
             await _error(cb.message, e, "build_profile")
             return
-    await ask_vacancy(cb.message, state)
+    await ask_name(cb.message, state, user.id)
+
+
+# ---------- Ожидание ответа модели: анимированный статус ----------
+
+STAGES_PROFILE = ["Читаю ваши материалы", "Выделяю опыт и достижения", "Собираю профиль"]
+STAGES_VACANCY = ["Читаю вакансию", "Выделяю требования", "Смотрю сайт компании"]
+STAGES_CLARIFY = ["Сравниваю профиль с вакансией", "Ищу пробелы", "Формулирую вопросы"]
+STAGES_ANSWERS = ["Добавляю ответы в профиль", "Обновляю профиль"]
+STAGES_TAILOR = ["Изучаю компанию", "Пишу резюме под вакансию", "Пишу письмо", "Проверяю каждый факт по профилю",
+                 "Собираю PDF"]
+SPIN = "◐◓◑◒"
+
+
+class working:
+    """Статус-сообщение, которое обновляется, пока ждём модель: этап, анимация, секунды. Потом удаляется.
+
+    Плюс «печатает…» в шапке чата. Ошибки обновления (лимиты Telegram) не мешают основной работе.
+    """
+
+    def __init__(self, message: Message, stages: list[str], every: float = 3.0):
+        self.message, self.stages, self.every = message, stages, every
+        self.msg = self.task = None
+
+    def _text(self, i: int, sec: int) -> str:
+        stage = self.stages[min(i // 2, len(self.stages) - 1)]
+        done = "".join("●" if k <= min(i // 2, len(self.stages) - 1) else "○" for k in range(len(self.stages)))
+        return f"{SPIN[i % 4]} <b>{stage}…</b>\n{done}  <i>{sec} с</i>"
+
+    async def _loop(self):
+        import asyncio
+        import time
+
+        t0, i = time.monotonic(), 0
+        while True:
+            await asyncio.sleep(self.every)
+            i += 1
+            try:
+                await self.message.bot.send_chat_action(self.message.chat.id, "typing")
+                await self.msg.edit_text(self._text(i, int(time.monotonic() - t0)))
+            except Exception:
+                pass
+
+    async def __aenter__(self):
+        import asyncio
+
+        try:
+            self.msg = await self.message.answer(self._text(0, 0))
+            self.task = asyncio.create_task(self._loop())
+        except Exception:
+            log.warning("progress message failed", exc_info=True)
+        return self
+
+    async def __aexit__(self, *exc):
+        if self.task:
+            self.task.cancel()
+        if self.msg:
+            try:
+                await self.msg.delete()
+            except Exception:
+                pass
+        return False
+
+
+# ---------- Имя в резюме ----------
+
+async def ask_name(message: Message, state: FSMContext, user_id: int):
+    """Имя показываем на подтверждение: его угадывают по резюме, и угадывание может ошибиться."""
+    from app.services.profile import plausible_name
+
+    async with SessionLocal() as s:
+        c = await s.get(Contact, user_id)
+    name = c.full_name if c else None
+    if name and plausible_name(name):
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Верно", callback_data="cv:name_ok"),
+                                                    InlineKeyboardButton(text="Изменить", callback_data="cv:name_edit")]])
+        await message.answer(f"В шапке резюме будет имя: <b>{html.escape(name)}</b>", reply_markup=kb)
+        return
+    await state.set_state(CV.name)
+    await message.answer("Как вас указать в резюме? Напишите имя и фамилию.")
+
+
+@router.callback_query(F.data.in_({"cv:name_ok", "cv:name_edit"}))
+async def on_name(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    if cb.data == "cv:name_ok":
+        await ask_vacancy(cb.message, state)
+        return
+    await state.set_state(CV.name)
+    await cb.message.answer("Напишите имя и фамилию так, как они должны стоять в резюме.")
+
+
+async def take_name(message: Message, state: FSMContext, text: str):
+    name = " ".join(text.split())
+    if not 2 <= len(name.split()) <= 4 or len(name) > 80 or any(ch.isdigit() for ch in name):
+        await message.answer("Напишите имя и фамилию, например: <code>Анна Иванова</code>")
+        return
+    user = await _user(message.from_user)
+    async with SessionLocal() as s:
+        c = await profile.get_contact(s, await s.get(User, user.id))
+        c.full_name = name
+        await s.commit()
+    await message.answer(f"Записал: <b>{html.escape(name)}</b>")
+    await ask_vacancy(message, state)
 
 
 async def _run(fn) -> dict:
@@ -195,13 +299,21 @@ async def ask_vacancy(message: Message, state: FSMContext):
 
 async def take_vacancy(message: Message, state: FSMContext, text: str):
     user = await _user(message.from_user)
-    await message.answer("Читаю вакансию…")
+    if is_url(text):  # отдельный шаг: сначала проверяем, читается ли страница, и честно говорим, если нет
+        async with working(message, ["Проверяю, читается ли страница"]):
+            chk = await intake.check_url(text.strip())
+        if not chk["ok"]:
+            await message.answer(f"⚠️ Не получилось прочитать страницу: {html.escape(chk['reason'])}\n\n"
+                                 "<b>Скопируйте текст вакансии со страницы и пришлите его сообщением.</b>")
+            return
+        await message.answer("✅ Страница читается" + (f": «{html.escape(chk['title'][:120])}»" if chk.get("title") else ""))
     try:
-        async with SessionLocal() as s:
-            u = await s.get(User, user.id)
-            t = await (intake.add_target(s, u, url=text.strip()) if is_url(text) else intake.add_target(s, u, text=text))
-            v = await s.get(Vacancy, t.vacancy_id)
-            await s.commit()
+        async with working(message, STAGES_VACANCY):
+            async with SessionLocal() as s:
+                u = await s.get(User, user.id)
+                t = await (intake.add_target(s, u, url=text.strip()) if is_url(text) else intake.add_target(s, u, text=text))
+                v = await s.get(Vacancy, t.vacancy_id)
+                await s.commit()
     except Exception as e:
         await _error(message, e, "add_target")
         return
@@ -244,13 +356,14 @@ async def ask_questions(message: Message, state: FSMContext):
     data = await state.get_data()
     user_id = message.chat.id
     try:
-        async with SessionLocal() as s:
-            from sqlalchemy import select
+        async with working(message, STAGES_CLARIFY):
+            async with SessionLocal() as s:
+                from sqlalchemy import select
 
-            u = (await s.execute(select(User).where(User.tg_id == user_id))).scalar_one()
-            t = await s.get(Target, data["target_id"])
-            qs = await intake.clarify(s, u, t)
-            await s.commit()
+                u = (await s.execute(select(User).where(User.tg_id == user_id))).scalar_one()
+                t = await s.get(Target, data["target_id"])
+                qs = await intake.clarify(s, u, t)
+                await s.commit()
     except Exception as e:
         await _error(message, e, "clarify")
         qs = []
@@ -267,11 +380,11 @@ async def ask_questions(message: Message, state: FSMContext):
 async def take_answers(message: Message, state: FSMContext, text: str):
     data = await state.get_data()
     user = await _user(message.from_user)
-    await message.answer("Записал, обновляю профиль…" if llm.available() else "Записал.")
     try:
-        async with SessionLocal() as s:
-            await intake.answer(s, await s.get(User, user.id), await s.get(Target, data["target_id"]), text)
-            await s.commit()
+        async with working(message, STAGES_ANSWERS):
+            async with SessionLocal() as s:
+                await intake.answer(s, await s.get(User, user.id), await s.get(Target, data["target_id"]), text)
+                await s.commit()
     except Exception as e:
         await _error(message, e, "answers")
         return
@@ -349,18 +462,27 @@ async def on_photo(message: Message, state: FSMContext, bot: Bot):
         path.write_bytes(buf.read())
         c.photo_path = str(path)
         await s.commit()
+    await message.reply("📸 Фото принял: оно будет в левом верхнем углу резюме. В ИИ фото не отправляется.")
     await generate(message, state, message.from_user)
 
 
 @router.callback_query(F.data.in_({"cv:nophoto", "cv:keepphoto"}))
 async def on_no_photo(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    if cb.data == "cv:nophoto":
-        user = await _user(cb.from_user)
-        async with SessionLocal() as s:
-            c = await profile.get_contact(s, await s.get(User, user.id))
+    user = await _user(cb.from_user)
+    async with SessionLocal() as s:
+        c = await profile.get_contact(s, await s.get(User, user.id))
+        if cb.data == "cv:nophoto":
             c.photo_path = None
             await s.commit()
+        photo = _photo(c)
+    if cb.data == "cv:keepphoto":
+        if photo:  # показываем, какое именно фото останется
+            await cb.message.answer_photo(BufferedInputFile(photo, "photo.jpg"), caption="Оставляю это фото.")
+        else:
+            await cb.message.answer("Прежнего фото нет, резюме будет без фото.")
+    else:
+        await cb.message.answer("Резюме будет без фото.")
     await generate(cb.message, state, cb.from_user)
 
 
@@ -372,10 +494,10 @@ async def generate(message: Message, state: FSMContext, tg_user, instruction: st
         await message.answer("🤖 <i>Генерация резюме работает на ИИ, а ИИ пока не подключён.</i>")
         return
     user = await _user(tg_user)
-    await message.answer("Пишу документы и проверяю каждый факт по вашему профилю. Обычно 1-2 минуты…")
     try:
-        res = await _run(tailor_job(user.id, data["target_id"], data.get("items") or list(PACKAGE_ITEMS),
-                                    data.get("scheme", "graphite"), instruction))
+        async with working(message, STAGES_TAILOR, every=4.0):
+            res = await _run(tailor_job(user.id, data["target_id"], data.get("items") or list(PACKAGE_ITEMS),
+                                        data.get("scheme", "graphite"), instruction))
     except Exception as e:
         await _error(message, e, "tailor")
         return
@@ -506,6 +628,8 @@ async def handle_text(message: Message, state: FSMContext, text: str, kind: str 
         await take_answers(message, state, text)
     elif st == CV.revise.state:
         await take_revision(message, state, text)
+    elif st == CV.name.state:
+        await take_name(message, state, text)
     elif st in (CV.items.state, CV.scheme.state, CV.photo.state):
         await message.answer("Выберите вариант кнопками выше.")
     else:

@@ -108,8 +108,8 @@ async def update_settings(body: SettingsIn, user: User = Depends(current_user),
 async def put_contact(body: ContactIn, user: User = Depends(current_user),
                       session: AsyncSession = Depends(get_session)):
     c = await profile.get_contact(session, user)
-    for k, v in body.model_dump().items():
-        setattr(c, k, v or None)
+    for k, v in body.model_dump(exclude_unset=True).items():  # только присланные поля: имя не стирает почту
+        setattr(c, k, (v or "").strip() or None)
     await session.commit()
     return {"ok": True}
 
@@ -395,6 +395,17 @@ async def _own_target(session: AsyncSession, target_id: int, user: User) -> tupl
     return t, await session.get(Vacancy, t.vacancy_id)
 
 
+class UrlIn(BaseModel):
+    url: str
+
+
+@api.post("/targets/check")
+async def check_target_url(body: UrlIn, user: User = Depends(current_user)):
+    """Отдельный шаг: читается ли страница вакансии. Нет: причина простыми словами, дальше просим текст."""
+    _need_consent(user)
+    return await intake.check_url(body.url)
+
+
 @api.post("/targets")
 async def add_target(body: TargetIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     """Вакансия ссылкой и/или текстом -> разбор + досье компании."""
@@ -538,6 +549,50 @@ async def package_file(package_id: int, item: str, accept_flags: bool = False, p
     name = {"cv": "resume", "one_page": "resume_one_page", "letter": "cover_letter"}[item]
     return Response(data, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{name}_v{pkg.version}.pdf"'})
+
+
+class SendIn(BaseModel):
+    items: list[str] | None = None  # по умолчанию все документы пакета
+    accept_flags: bool = False
+
+
+@api.post("/packages/{package_id}/send")
+async def send_to_telegram(package_id: int, body: SendIn, user: User = Depends(current_user),
+                           session: AsyncSession = Depends(get_session)):
+    """Прислать файлы пакета в чат с ботом: из окна Mini App скачивание работает медленно или не работает."""
+    from app.services import notify
+
+    pkg = await _own_package(session, package_id, user)
+    if not user.tg_id:
+        raise HTTPException(400, "Аккаунт не связан с Telegram: скачайте файлы кнопками")
+    contact = await session.get(Contact, user.id)
+    vacancy = await session.get(Vacancy, pkg.vacancy_id)
+    photo = _photo(contact)
+    names = {"cv": "Резюме", "one_page": "Резюме_1_страница", "letter": "Сопроводительное_письмо"}
+    files, skipped = [], []
+    for item in [i for i in (body.items or pkg.items or []) if i in (pkg.items or [])]:
+        try:
+            files.append((f"{names[item]}_v{pkg.version}.pdf",
+                          export.render_item(pkg, contact, item, photo, body.accept_flags,
+                                             company=vacancy.company_name, position=vacancy.title)))
+        except export.FlagsNotAccepted:
+            skipped.append(item)
+    if not files:
+        raise HTTPException(409, "Письмо ждёт подтверждения: отметьте, что утверждения в нём верны")
+    ok = await notify.send_documents(user.tg_id, files, f"Документы под вакансию «{vacancy.title}» · {vacancy.company_name}")
+    if not ok:
+        raise HTTPException(502, "Telegram не принял файлы. Попробуйте ещё раз или скачайте кнопками")
+    return {"ok": True, "sent": len(files), "skipped": skipped}
+
+
+@api.get("/contact/photo")
+async def get_photo(user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Превью загруженного фото, чтобы было видно, что попадёт в резюме."""
+    photo = _photo(await session.get(Contact, user.id))
+    if photo is None:
+        raise HTTPException(404, "Фото не загружено")
+    mt = "image/png" if photo[1:4] == b"PNG" else "image/webp" if photo[8:12] == b"WEBP" else "image/jpeg"
+    return Response(photo, media_type=mt, headers={"Cache-Control": "no-store"})
 
 
 @api.get("/schemes")

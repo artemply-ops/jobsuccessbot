@@ -89,10 +89,44 @@ async def _harvest_contacts(session: AsyncSession, user: User, src: Source) -> N
     if not c.phone and (m := PHONE_RE.search(src.text)):
         c.phone = m.group(0)
     if not c.full_name and src.kind == "file":
-        spans = _person_spans(src.text[:300])
-        if spans:
-            a, b = spans[0]
-            c.full_name = src.text[a:b]
+        c.full_name = guess_name(src.text)
+
+
+MONTHS = {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec", "янв", "фев",
+          "мар", "апр", "май", "мая", "июн", "июл", "авг", "сен", "сент", "окт", "ноя", "дек"}
+NOT_NAMES = {"резюме", "resume", "cv", "curriculum", "vitae", "опыт", "experience", "контакты", "contacts", "профиль",
+             "profile", "summary", "образование", "education", "навыки", "skills", "москва", "россия"}
+
+
+def plausible_name(s: str | None) -> bool:
+    """Похоже ли на ФИО: 2-3 слова из букв, без месяцев, цифр и заголовков разделов.
+
+    Баг до 14.11.2026: NER из начала резюме брал кусок даты («Nov ...»), и он печатался в шапке как имя.
+    """
+    words = (s or "").replace(" ", " ").split()
+    if not 2 <= len(words) <= 3:
+        return False
+    for w in words:
+        if not re.fullmatch(r"[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё'\-]+", w) or not w[0].isupper():
+            return False
+        low = w.lower().strip(".")
+        if low in NOT_NAMES or low[:3] in MONTHS or low in MONTHS:
+            return False
+    return True
+
+
+def guess_name(text: str) -> str | None:
+    """Имя кандидата из начала резюме: первая правдоподобная строка или найденное NER лицо. Не нашли: None,
+    пользователь укажет имя сам (бот и приложение показывают имя на подтверждение до генерации)."""
+    head = text[:600]
+    for line in head.splitlines()[:4]:
+        cand = re.split(r"\s[-–—|·,]\s|,|\.\s", line.strip())[0].strip()
+        if plausible_name(cand):
+            return " ".join(w if not w.isupper() else w.capitalize() for w in cand.split())
+    for a, b in _person_spans(head):
+        if plausible_name(head[a:b]):
+            return head[a:b]
+    return None
 
 
 async def _sources_block(session: AsyncSession, user: User, sources: list[Source]) -> tuple[str, Vault]:

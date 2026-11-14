@@ -1,6 +1,6 @@
 // Этап 5 пивота: тот же сценарий, что в боте. Материалы -> вакансия -> уточнения -> документы -> схема -> фото -> файлы.
-import { useEffect, useState } from "react";
-import { api, ApiError, download, getConfig, upload, waitJob } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { api, ApiError, download, getConfig, inTelegram, upload, waitJob } from "../api";
 
 type Step = "materials" | "vacancy" | "answers" | "items" | "scheme" | "photo" | "result";
 type Source = { id: number; kind: string; filename: string | null; status: string; error: string | null; preview: string };
@@ -48,10 +48,13 @@ export default function MakePage() {
   }, [step, target, items, scheme, packageId]);
   useEffect(() => {
     if (saved.targetId && !target) api<Target>(`/targets/${saved.targetId}`).then(setTarget).catch(() => setStep("vacancy"));
+    // шаг после вакансии, а вакансии нет (очистили данные, другой браузер): иначе пустой экран
+    else if (!saved.targetId && !["materials", "vacancy"].includes(step)) setStep("vacancy");
   }, []);
 
-  const run = async (label: string, fn: () => Promise<void>) => {
-    setBusy(label);
+  // busy: этапы ожидания; Working показывает их по очереди с анимацией и секундами
+  const run = async (stages: string | string[], fn: () => Promise<void>) => {
+    setBusy(Array.isArray(stages) ? stages.join("|") : stages);
     setError("");
     try {
       await fn();
@@ -67,10 +70,10 @@ export default function MakePage() {
       <Progress step={step} />
       {!ai && <div className="banner">ИИ пока не подключён: материалы и вакансия сохранятся, документы соберём после подключения.</div>}
       {error && <div className="banner error">{error}</div>}
-      {busy && <div className="banner">{busy}</div>}
+      {busy && <Working stages={busy.split("|")} />}
 
       {step === "materials" && (
-        <Materials disabled={!!busy} onNext={() => run("Собираю профиль из материалов…", async () => {
+        <Materials disabled={!!busy} onNext={() => run(["Читаю ваши материалы", "Выделяю опыт и достижения", "Собираю профиль"], async () => {
           const r = await api<{ job_id?: number }>("/profile/build", { method: "POST", json: {} });
           if (r.job_id) await waitJob(r.job_id);
           setStep("vacancy");
@@ -78,7 +81,7 @@ export default function MakePage() {
       )}
 
       {step === "vacancy" && (
-        <Vacancy disabled={!!busy} onSubmit={(url, text, company_url) => run("Читаю вакансию и сайт компании…", async () => {
+        <Vacancy disabled={!!busy} onSubmit={(url, text, company_url) => run(["Читаю вакансию", "Выделяю требования", "Смотрю сайт компании", "Сравниваю с вашим профилем", "Формулирую уточнения"], async () => {
           const t = await api<Target>("/targets", { method: "POST", json: { url: url || null, text: text || null, company_url: company_url || null } });
           setTarget(t);
           setPackageId(undefined);
@@ -90,7 +93,7 @@ export default function MakePage() {
 
       {step === "answers" && target && (
         <Answers target={target} disabled={!!busy} onSkip={() => setStep("items")}
-          onSubmit={(text) => run("Записываю ответы в профиль…", async () => {
+          onSubmit={(text) => run(["Добавляю ответы в профиль", "Обновляю профиль"], async () => {
             await api(`/targets/${target.id}/answers`, { method: "POST", json: { text } });
             setStep("items");
           })} />
@@ -141,14 +144,61 @@ const STEPS: [Step, string][] = [["materials", "О себе"], ["vacancy", "Ва
 function Progress({ step }: { step: Step }) {
   const i = STEPS.findIndex(([s]) => s === step);
   return (
-    <div className="steps">
+    <div className="steps-wrap"><div className="steps">
       {STEPS.map(([s, t], n) => (
         <span key={s} className={n === i ? "on" : n < i ? "done" : ""} title={t}>
           <span className="num">{n < i ? "✓" : n + 1}</span>
           <span className="lbl">{t}</span>
         </span>
       ))}
+    </div></div>
+  );
+}
+
+// Анимированный статус, пока ждём модель: этапы по очереди, полоса, секунды
+function Working({ stages }: { stages: string[] }) {
+  const [sec, setSec] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setSec((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const i = Math.min(Math.floor(sec / 4), stages.length - 1);
+  return (
+    <div className="working" role="status" aria-live="polite">
+      <span className="spinner" />
+      <div className="grow">
+        <div className="stage" key={i}>{stages[i]}…</div>
+        <div className="dots">
+          {stages.length > 1 && stages.map((s, n) => <span key={s} className={n <= i ? "on" : ""} />)}
+          <span className="muted small">{sec} с</span>
+        </div>
+        <div className="wbar"><span /></div>
+      </div>
     </div>
+  );
+}
+
+function NameField() {
+  // Имя угадывается по резюме и может ошибиться: показываем и даём поправить до генерации
+  const [name, setName] = useState("");
+  const [saved, setSaved] = useState("");
+  useEffect(() => {
+    api<{ contact: { full_name: string | null } | null }>("/me")
+      .then((m) => { setName(m.contact?.full_name || ""); setSaved(m.contact?.full_name || ""); }).catch(() => {});
+  }, []);
+  const save = async () => {
+    await api("/contact", { method: "PUT", json: { full_name: name.trim() } });
+    setSaved(name.trim());
+  };
+  return (
+    <label>Имя в шапке резюме
+      <div className="row gap">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Имя Фамилия" />
+        <button className="btn secondary" disabled={!name.trim() || name.trim() === saved} onClick={save}>
+          {name.trim() && name.trim() === saved ? "✓" : "Сохранить"}
+        </button>
+      </div>
+    </label>
   );
 }
 
@@ -156,7 +206,8 @@ function Materials({ onNext, disabled }: { onNext: () => void; disabled: boolean
   const [sources, setSources] = useState<Source[]>([]);
   const [text, setText] = useState("");
   const [err, setErr] = useState("");
-  const reload = () => api<Source[]>("/sources").then(setSources).catch(() => {});
+  const [nameKey, setNameKey] = useState(0);  // после загрузки файла имя могло определиться: перечитываем
+  const reload = () => api<Source[]>("/sources").then(setSources).then(() => setNameKey((k) => k + 1)).catch(() => {});
   useEffect(() => { reload(); }, []);
   const onFile = async (f: File | undefined) => {
     if (!f) return;
@@ -190,28 +241,64 @@ function Materials({ onNext, disabled }: { onNext: () => void; disabled: boolean
           {ok.map((s) => <li key={s.id}>{s.filename || (s.kind === "voice" ? "Голосовое" : "Текст")}: {s.preview.slice(0, 60)}…</li>)}
         </ul>
       )}
+      {ok.length > 0 && <NameField key={nameKey} />}
       <button className="btn" disabled={!ok.length || disabled} onClick={onNext}>Дальше</button>
     </div>
   );
 }
 
+type Check = { ok: boolean; reason?: string; title?: string };
+
 function Vacancy({ onSubmit, disabled }: { onSubmit: (url: string, text: string, company: string) => void; disabled: boolean }) {
+  // Отдельный шаг проверки ссылки: читается ли страница. Нет: объясняем почему и просим вставить текст.
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
   const [company, setCompany] = useState("");
+  const [check, setCheck] = useState<Check | null>(null);
+  const [checking, setChecking] = useState(false);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  const doCheck = async () => {
+    setChecking(true);
+    setCheck(null);
+    try {
+      const c = await api<Check>("/targets/check", { method: "POST", json: { url: url.trim() } });
+      setCheck(c);
+      if (!c.ok) setTimeout(() => textRef.current?.focus(), 50);
+    } catch (e: any) {
+      setCheck({ ok: false, reason: e.message });
+    } finally {
+      setChecking(false);
+    }
+  };
+  const useUrl = !!url.trim() && check?.ok && !text.trim();
   return (
     <div className="card stack">
       <h2>Вакансия</h2>
       <label>Ссылка на вакансию на сайте компании
-        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://career.company.ru/..." />
+        <div className="row gap">
+          <input value={url} onChange={(e) => { setUrl(e.target.value); setCheck(null); }} placeholder="https://career.company.ru/..." />
+          <button className="btn secondary" disabled={!url.trim() || checking} onClick={doCheck}>
+            {checking ? "Проверяю…" : "Проверить"}
+          </button>
+        </div>
       </label>
-      <label>или текст вакансии
-        <textarea rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder="Ссылки hh.ru не открываю: скопируйте текст оттуда" />
+      {checking && <Working stages={["Проверяю, читается ли страница"]} />}
+      {check?.ok && <div className="banner ok">✓ Страница читается{check.title ? `: «${check.title}»` : ""}</div>}
+      {check && !check.ok && (
+        <div className="banner error">
+          Не получилось прочитать страницу: {check.reason} <b>Скопируйте текст вакансии и вставьте его ниже.</b>
+        </div>
+      )}
+      <label>{check && !check.ok ? "Текст вакансии" : "или текст вакансии"}
+        <textarea ref={textRef} rows={6} value={text} onChange={(e) => setText(e.target.value)}
+          className={check && !check.ok ? "attention" : ""} placeholder="Ссылки hh.ru не открываю: скопируйте текст оттуда" />
       </label>
       <label>Сайт компании (необязательно, для миссии и ценностей в письме)
         <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="company.ru" />
       </label>
-      <button className="btn" disabled={disabled || (!url.trim() && !text.trim())} onClick={() => onSubmit(url.trim(), text.trim(), company.trim())}>
+      {url.trim() && !check && !text.trim() && <p className="muted small">Сначала проверьте ссылку.</p>}
+      <button className="btn" disabled={disabled || !(useUrl || text.trim())}
+        onClick={() => onSubmit(useUrl ? url.trim() : (check?.ok ? url.trim() : ""), text.trim(), company.trim())}>
         Дальше
       </button>
     </div>
@@ -262,14 +349,19 @@ function Schemes({ value, onChange, onNext }: { value: string; onChange: (k: str
 
 function Photo({ onNext, disabled }: { onNext: () => void; disabled: boolean }) {
   const [err, setErr] = useState("");
-  const [has, setHas] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);  // то, что реально попадёт в резюме
+  const [fresh, setFresh] = useState(false);
+  useEffect(() => {  // прежнее фото с сервера, если есть
+    api<Blob>("/contact/photo").then((b) => setPreview(URL.createObjectURL(b))).catch(() => setPreview(null));
+  }, []);
   const put = async (f: File | undefined) => {
     if (!f) return;
     const fd = new FormData();
     fd.append("file", f, f.name);
     try {
       await api("/contact/photo", { method: "PUT", body: fd });
-      setHas(true);
+      setPreview(URL.createObjectURL(f));
+      setFresh(true);
       setErr("");
     } catch (e: any) {
       setErr(e.message);
@@ -279,8 +371,17 @@ function Photo({ onNext, disabled }: { onNext: () => void; disabled: boolean }) 
     <div className="card stack">
       <h2>Фото для резюме</h2>
       <p className="muted small">Необязательно. Фото хранится у нас и в ИИ не отправляется.</p>
+      {preview ? (
+        <div className="photo-row">
+          <img className="photo-preview" src={preview} alt="Фото для резюме" />
+          <div className="stack small-gap">
+            <b>{fresh ? "Фото загружено" : "Сейчас в резюме это фото"}</b>
+            <span className="muted small">Будет в левом верхнем углу шапки, обрежется по рамке.</span>
+          </div>
+        </div>
+      ) : <p className="muted small">Фото пока нет.</p>}
       <label className="btn secondary file">
-        {has ? "Фото загружено, заменить" : "Загрузить фото"}
+        {preview ? "Заменить фото" : "Загрузить фото"}
         <input type="file" accept="image/*" hidden onChange={(e) => put(e.target.files?.[0])} />
       </label>
       {err && <p className="error">{err}</p>}
@@ -288,7 +389,7 @@ function Photo({ onNext, disabled }: { onNext: () => void; disabled: boolean }) 
         <button className="btn secondary" disabled={disabled} onClick={async () => { await api("/contact/photo", { method: "DELETE" }); onNext(); }}>
           Без фото
         </button>
-        <button className="btn" disabled={disabled} onClick={onNext}>{has ? "Дальше" : "Оставить прежнее"}</button>
+        <button className="btn" disabled={disabled} onClick={onNext}>{preview ? "Дальше с этим фото" : "Дальше без фото"}</button>
       </div>
     </div>
   );
@@ -296,7 +397,7 @@ function Photo({ onNext, disabled }: { onNext: () => void; disabled: boolean }) 
 
 function Result(props: {
   target: Target; items: string[]; scheme: string; packageId?: number; setPackageId: (id: number) => void;
-  busy: string; run: (label: string, fn: () => Promise<void>) => Promise<void>; ai: boolean; onNew: () => void;
+  busy: string; run: (stages: string | string[], fn: () => Promise<void>) => Promise<void>; ai: boolean; onNew: () => void;
 }) {
   const { target, items, scheme, packageId, setPackageId, busy, run, ai, onNew } = props;
   const [pkg, setPkg] = useState<Pkg | null>(null);
@@ -304,8 +405,34 @@ function Result(props: {
   const [accept, setAccept] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [schemes, setSchemes] = useState<Scheme[]>([]);
+  const [sent, setSent] = useState<string>("");  // статус отправки в Telegram
+  const [loadingItem, setLoadingItem] = useState<string>("");
 
-  const generate = (instr?: string) => run(instr ? "Вношу правку и перепроверяю факты…" : "Пишу документы и проверяю каждый факт. Обычно 1-2 минуты…", async () => {
+  // Из окна Mini App скачивание работает плохо: основной путь там — прислать файлы в чат с ботом
+  const sendToChat = async () => {
+    setSent("sending");
+    try {
+      const r = await api<{ sent: number; skipped: string[] }>(`/packages/${pkg!.id}/send`, {
+        method: "POST", json: { accept_flags: accept } });
+      setSent(`✓ Отправил в чат с ботом: ${r.sent} ${r.sent === 1 ? "файл" : r.sent < 5 ? "файла" : "файлов"}`
+        + (r.skipped.length ? ". Письмо ждёт подтверждения" : ""));
+    } catch (e: any) {
+      setSent(`⚠️ ${e.message}`);
+    }
+  };
+  const downloadItem = async (it: string) => {
+    setLoadingItem(it);
+    try {
+      await download(`/packages/${pkg!.id}/file/${it}${it === "letter" && accept ? "?accept_flags=true" : ""}`,
+        `${FILE_NAMES[it]}_v${pkg!.version}.pdf`);
+    } finally {
+      setLoadingItem("");
+    }
+  };
+
+  const generate = (instr?: string) => run(instr
+    ? ["Вношу правку", "Перепроверяю факты", "Собираю PDF"]
+    : ["Изучаю компанию", "Пишу резюме под вакансию", "Пишу письмо", "Проверяю каждый факт по профилю", "Собираю PDF"], async () => {
     const r = await api<{ job_id?: number; stub?: boolean; message?: string }>(`/targets/${target.id}/package`, {
       method: "POST", json: { items, scheme: pkg?.scheme || scheme, instruction: instr || null } });
     if (r.stub) throw new Error(r.message || "ИИ не подключён");
@@ -346,7 +473,7 @@ function Result(props: {
       </div>
     );
   }
-  if (!pkg) return <div className="card muted">{busy || "Готовлю документы…"}</div>;
+  if (!pkg) return busy ? null : <Working stages={["Загружаю документы"]} />;
   const cvFlags = pkg.flags.filter((f) => f.where === "cv");
   const letterFlags = pkg.flags.filter((f) => f.where !== "cv");
   return (
@@ -365,14 +492,18 @@ function Result(props: {
                   {it === "letter" && letterFlags.length > 0 && !accept ? "Письмо ждёт подтверждения" : "Превью готовится"}
                 </div>
               )}
-              <button className="btn" disabled={it === "letter" && letterFlags.length > 0 && !accept}
-                onClick={() => download(`/packages/${pkg.id}/file/${it}${it === "letter" && accept ? "?accept_flags=true" : ""}`,
-                  `${FILE_NAMES[it]}_v${pkg.version}.pdf`)}>
-                {ITEMS.find(([k]) => k === it)?.[1]} · PDF
+              <button className={`btn ${inTelegram() ? "secondary" : ""}`}
+                disabled={(it === "letter" && letterFlags.length > 0 && !accept) || loadingItem === it}
+                onClick={() => downloadItem(it)}>
+                {loadingItem === it ? "Скачиваю…" : `${ITEMS.find(([k]) => k === it)?.[1]} · PDF`}
               </button>
             </div>
           ))}
         </div>
+        <button className={`btn ${inTelegram() ? "" : "secondary"}`} disabled={sent === "sending"} onClick={sendToChat}>
+          {sent === "sending" ? "Отправляю в Telegram…" : "Прислать все файлы в Telegram"}
+        </button>
+        {sent && sent !== "sending" && <div className={`banner ${sent.startsWith("✓") ? "ok" : "error"}`}>{sent}</div>}
         {letterFlags.length > 0 && (
           <div className="banner error">В письме есть утверждения, которых нет в вашем профиле:
             <ul>{letterFlags.map((f) => <li key={f.text}>{f.text} — {f.reason}</li>)}</ul>
@@ -387,7 +518,7 @@ function Result(props: {
         <div className="row gap wrap">
           {schemes.map((s) => (
             <button key={s.key} className={`btn ${s.key === pkg.scheme ? "" : "secondary"}`} disabled={!!busy}
-              onClick={() => run("Перерисовываю…", async () => {
+              onClick={() => run(["Перерисовываю документы"], async () => {
                 await api(`/packages/${pkg.id}`, { method: "PATCH", json: { scheme: s.key } });
                 await loadPkg(pkg.id);
               })}>{s.title.split(" (")[0]}</button>

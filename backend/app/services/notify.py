@@ -29,6 +29,29 @@ async def send_message(chat_id: int, text: str) -> bool:
         await bot.session.close()
 
 
+async def send_documents(chat_id: int, files: list[tuple[str, bytes]], text: str | None = None) -> bool:
+    """Файлы пакета в чат с ботом. Нужен для Mini App: скачивание из окна Telegram работает плохо."""
+    s = get_settings()
+    if not s.telegram_bot_token:
+        return False
+    from aiogram.types import BufferedInputFile
+
+    from app.tg import make_bot
+
+    bot = make_bot()
+    try:
+        if text:
+            await bot.send_message(chat_id, text, disable_web_page_preview=True)
+        for name, data in files:
+            await bot.send_document(chat_id, BufferedInputFile(data, name))
+        return True
+    except Exception:
+        log.exception("telegram send_documents failed: chat=%s files=%s", chat_id, len(files))
+        return False
+    finally:
+        await bot.session.close()
+
+
 async def notify_new_matches(session: AsyncSession, user_id: int, limit: int = 5) -> int:
     user = await session.get(User, user_id)
     if user is None or not user.tg_id:

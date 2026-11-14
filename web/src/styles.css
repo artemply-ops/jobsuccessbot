@@ -115,16 +115,46 @@ input[type="range"] { width: 140px; padding: 0; }
 /* Мастер «резюме под вакансию» (pages/Make.tsx) */
 /* Ширина шага по содержимому: длинные названия («Уточнения», «Документы») не вылезают за рамку.
    На узком экране у неактивных шагов только номер, название видно у текущего шага. */
+/* Решение зависит от ширины самой полоски (container query), а не окна: в Telegram Desktop окно Mini App
+   бывает 650-750 px, где по ширине окна подписи помещались «впритык» и вылезали за рамки шагов. */
+.steps-wrap { container-type: inline-size; }
 .steps { display: flex; gap: 4px; font-size: 12px; }
-.steps > span { flex: 1 1 auto; min-width: 0; display: inline-flex; justify-content: center; align-items: center; gap: 4px;
-  padding: 6px 8px; border-radius: 8px; color: var(--muted); background: var(--bg); border: 1px solid var(--border);
-  white-space: nowrap; }
+.steps > span { flex: 1 0 auto; min-width: max-content; display: inline-flex; justify-content: center; align-items: center;
+  gap: 4px; padding: 6px 8px; border-radius: 8px; color: var(--muted); background: var(--bg); border: 1px solid var(--border);
+  white-space: nowrap; overflow: hidden; }
 .steps > span .num { font-weight: 600; }
 .steps > span.done { color: var(--ok); }
-.steps > span.on { flex: 0 0 auto; color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
-@media (max-width: 640px) {
+.steps > span.on { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+@container (max-width: 760px) {
   .steps > span:not(.on) .lbl { display: none; }
+  .steps > span:not(.on) { min-width: 28px; }
 }
+@supports not (container-type: inline-size) {
+  @media (max-width: 860px) { .steps > span:not(.on) .lbl { display: none; } }
+}
+
+/* Ожидание ответа модели */
+.working { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg)); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
+.working .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.working .stage { font-weight: 600; animation: jp-fade .4s ease; }
+.working .dots { display: flex; align-items: center; gap: 5px; }
+.working .dots > span:not(.muted) { width: 7px; height: 7px; border-radius: 50%; background: var(--border); transition: background .3s; }
+.working .dots > span.on { background: var(--accent); }
+.working .dots .muted { margin-left: auto; }
+.spinner { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 3px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent); animation: jp-spin .8s linear infinite; }
+.wbar { height: 3px; border-radius: 99px; background: color-mix(in srgb, var(--accent) 15%, transparent); overflow: hidden; }
+.wbar span { display: block; width: 35%; height: 100%; border-radius: 99px; background: var(--accent); animation: jp-slide 1.4s ease-in-out infinite; }
+@keyframes jp-spin { to { transform: rotate(360deg); } }
+@keyframes jp-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
+@keyframes jp-fade { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .spinner, .wbar span, .working .stage { animation: none; } }
+
+.banner.ok { background: color-mix(in srgb, var(--ok) 14%, var(--bg)); }
+textarea.attention { border-color: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 18%, transparent); }
+.photo-row { display: flex; gap: 12px; align-items: center; }
+.photo-preview { width: 84px; height: 84px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); flex: none; }
 .schemes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .scheme { display: flex; flex-direction: column; gap: 6px; align-items: stretch; padding: 8px; border-radius: 12px;
   border: 2px solid var(--border); background: var(--bg2); color: var(--text); font: inherit; cursor: pointer; text-align: left; }
