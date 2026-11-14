@@ -27,7 +27,19 @@ async def lifespan(_: FastAPI):
     if s.run_bot_in_api and s.telegram_bot_token:
         from app.bot.handlers import run_polling
 
-        tasks.append(asyncio.create_task(run_polling()))
+        async def bot_forever():
+            # Падение или зависание старта бота раньше было молчаливым: API жив, бот нет. Теперь в лог и повтор.
+            while True:
+                try:
+                    await run_polling()
+                    return
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("bot polling crashed, restart in 15 s")
+                    await asyncio.sleep(15)
+
+        tasks.append(asyncio.create_task(bot_forever()))
     yield
     for t in tasks:
         t.cancel()

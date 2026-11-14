@@ -5,6 +5,7 @@
 Пока ИИ не подключён, шаги с ИИ отвечают заглушкой и ведут пользователя к следующему шагу.
 """
 
+import asyncio
 import html
 import logging
 from datetime import datetime, timezone
@@ -498,9 +499,14 @@ async def run_polling() -> None:
         raise SystemExit("TELEGRAM_BOT_TOKEN не задан в .env")
     await init_db()
     bot = make_bot()
-    await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in COMMANDS])
-    if url := web_url():
-        await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="Приложение", web_app=WebAppInfo(url=url)))
+    try:  # через прокси первый запрос иногда виснет: ограничиваем, иначе бот молча не стартует
+        await asyncio.wait_for(bot.set_my_commands([BotCommand(command=c, description=d) for c, d in COMMANDS]), 30)
+        if url := web_url():
+            await asyncio.wait_for(bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text="Приложение", web_app=WebAppInfo(url=url))), 30)
+    except BaseException:
+        await bot.session.close()
+        raise
     try:
         await dp.start_polling(bot, handle_signals=False)
     finally:
