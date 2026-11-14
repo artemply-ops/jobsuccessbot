@@ -320,7 +320,7 @@ function Answers({ target, onSubmit, onSkip, disabled }: { target: Target; onSub
       <p className="muted small">{target.title} · {target.company}</p>
       {target.coverage && target.coverage.req_total > 0 && (
         <div className="banner">📊 Ваше резюме сейчас закрывает <b>{target.coverage.req_covered} из {target.coverage.req_total}</b> требований
-          вакансии. После генерации покажу, сколько стало.</div>
+          вакансии{target.coverage.req_partial ? `, частично ещё ${target.coverage.req_partial}` : ""}. После генерации покажу, сколько стало.</div>
       )}
       <ol>{target.questions.map((q) => <li key={q.field + q.question}>{q.question}</li>)}</ol>
       <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder="Ответьте своими словами, можно коротко" />
@@ -578,7 +578,7 @@ function CoverageCard({ cov, before, left, busy, onImprove }: {
           <b className="cov-num">{cov.req_covered} из {cov.req_total}</b>
           <span className="muted small">
             {cov.req_partial ? `частично ещё ${cov.req_partial}` : ""}
-            {before && before.req_total ? ` · в исходном резюме было ${before.req_covered} из ${before.req_total}` : ""}
+            {before && before.req_total ? ` · в исходном резюме было ${before.req_covered} из ${before.req_total}${before.req_partial ? `, частично ${before.req_partial}` : ""}` : ""}
           </span>
         </div>
       )}

@@ -372,7 +372,8 @@ async def ask_questions(message: Message, state: FSMContext):
     if before and before.get("req_total"):  # «своё резюме против вакансии» до генерации
         miss = [r["requirement"] for r in before["requirements"] if r["status"] == "missing"]
         await message.answer(f"📊 Ваше резюме сейчас закрывает <b>{before['req_covered']} из {before['req_total']}</b> "
-                             "требований вакансии." + ("\nНе видно: " + html.escape("; ".join(miss[:4])) if miss else "")
+                             f"требований вакансии" + (f", частично ещё {before['req_partial']}" if before.get("req_partial") else "")
+                             + "." + ("\nНе видно: " + html.escape("; ".join(miss[:4])) if miss else "")
                              + "\nПосле генерации покажу, сколько стало.")
     if not qs:
         await ask_items(message, state)
@@ -571,7 +572,8 @@ def coverage_text(cov: dict, before: dict | None) -> str:
     total = cov.get("req_total") or 0
     lines = []
     if total:
-        was = (f" (в исходном резюме было {before['req_covered']} из {before['req_total']})"
+        was = (f" (в исходном резюме было {before['req_covered']} из {before['req_total']}"
+               + (f", частично {before['req_partial']}" if before.get("req_partial") else "") + ")"
                if before and before.get("req_total") else "")
         part = f", частично ещё {cov['req_partial']}" if cov.get("req_partial") else ""
         lines.append(f"📊 <b>Покрытие требований: {cov['req_covered']} из {total}</b>{part}{was}")
