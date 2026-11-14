@@ -421,6 +421,20 @@ async def add_target(body: TargetIn, user: User = Depends(current_user), session
     return intake.view(t, await session.get(Vacancy, t.vacancy_id), d)
 
 
+class GeneralIn(BaseModel):
+    role: str | None = None  # желаемая должность, необязательно
+
+
+@api.post("/targets/general")
+async def add_general_target(body: GeneralIn, user: User = Depends(current_user),
+                             session: AsyncSession = Depends(get_session)):
+    """Быстрый путь: резюме из опыта без конкретной вакансии."""
+    _need_consent(user)
+    t = await intake.add_general_target(session, user, body.role)
+    await session.commit()
+    return intake.view(t, await session.get(Vacancy, t.vacancy_id))
+
+
 @api.get("/targets/{target_id}")
 async def get_target(target_id: int, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     t, v = await _own_target(session, target_id, user)

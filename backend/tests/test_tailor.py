@@ -133,3 +133,48 @@ def test_add_missing_columns_on_old_table(tmp_path):
         cols = {r[1] for r in c.exec_driver_sql("PRAGMA table_info(contacts)")}
         assert "photo_path" in cols and "vault" not in cols  # обязательные колонки не досоздаются
         assert c.exec_driver_sql("SELECT full_name FROM contacts").scalar() == "Анна Тестова"
+
+
+async def test_general_cv_without_vacancy(session, monkeypatch):
+    """Быстрый путь: резюме из опыта без вакансии. Без письма, без досье и покрытия, свой промпт. ТЕСТОВЫЕ ДАННЫЕ."""
+    import httpx
+
+    from app.config import get_settings
+    from app.models import User, Vacancy
+    from app.services import intake, llm
+    from app.services.profile import save_basic
+
+    user = User(tg_id=951, consent_at=datetime.datetime.now())
+    session.add(user)
+    await session.flush()
+    await save_basic(session, user, "Аналитик данных, Москва")
+    target = await intake.add_general_target(session, user, "  Руководитель аналитики  ")
+    assert intake.is_general(target) and target.parsed["role"] == "Руководитель аналитики"
+    assert intake.view(target, await session.get(Vacancy, target.vacancy_id))["general"] is True
+    other = await intake.add_general_target(session, user)  # каждый запуск отдельной целью
+    assert other.id != target.id and (await session.get(Vacancy, other.vacancy_id)).title
+
+    calls, systems = [], []
+    cv = {"headline": "Аналитик данных", "summary": "s", "highlights": [], "skills": ["SQL"], "education": [],
+          "languages": [], "experience": [{"company": "Т", "role": "Аналитик", "period": "2020", "bullets": ["Считал"]}]}
+
+    def handler(req: httpx.Request):
+        body = json.loads(req.content)
+        name = body["response_format"]["json_schema"]["name"]
+        calls.append(name)
+        systems.append(body["messages"][0]["content"])
+        out = {"TailoredCV": {"cv": cv}, "FactCheck": {"flags": []}}[name]
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop",
+                                                      "message": {"content": json.dumps(out, ensure_ascii=False)}}]})
+
+    monkeypatch.setattr(get_settings(), "llm_api_key", "test-key")
+    monkeypatch.setattr(get_settings(), "llm_enabled", True)
+    monkeypatch.setattr(llm, "_client", httpx.AsyncClient(base_url="https://or.test", transport=httpx.MockTransport(handler)))
+    try:
+        pkg = await tailor.build(session, user, target, ["cv", "one_page", "letter"])
+        with pytest.raises(tailor.PackageError):  # только письмо без вакансии не собрать
+            await tailor.build(session, user, other, ["letter"])
+    finally:
+        monkeypatch.setattr(llm, "_client", None)
+    assert pkg.items == ["cv", "one_page"] and pkg.coverage is None and pkg.cover_letter == ""
+    assert calls == ["TailoredCV", "FactCheck"] and "без конкретной вакансии" in systems[0]

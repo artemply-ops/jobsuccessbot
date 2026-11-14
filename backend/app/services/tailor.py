@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Package, Target, User, Vacancy
 from app.schemas import CV, PACKAGE_ITEMS, FactCheck, TailoredBoth, TailoredCV, TailoredLetter
-from app.services import llm, package
+from app.services import intake, llm, package
 from app.services.cv_render import SCHEMES
 from app.services.profile import latest_profile, profile_to_text
 
@@ -45,6 +45,20 @@ SYSTEM_CV = f"""Ты сильный карьерный консультант и
   пункт начинается с глагола и, где есть в профиле, содержит результат с цифрой.
 - skills: до 14, сначала те, что требует вакансия и что есть у кандидата.
 {RULES}"""
+
+SYSTEM_CV_GENERAL = f"""Ты сильный карьерный консультант и редактор. Собираешь сильное резюме из опыта кандидата,
+без конкретной вакансии. Материалы могут быть разрозненными: надиктованный рассказ, куски старых резюме, заметки.
+Твоя задача: навести порядок и подать опыт сильно, ничего не добавляя.
+- headline: роль, которую кандидат реально занимал или занимает; если указана желаемая роль и опыт её
+  подтверждает, сформулируй под неё. Должность выше фактической не ставь.
+- summary: 2-3 предложения: кто кандидат, в чём силён, чем полезен, с опорой на факты.
+- highlights: до 8 самых сильных измеримых результатов. value это число ровно в том виде, как оно есть в профиле,
+  label 2-5 слов. Нет цифр в профиле: пустой список, придумывать нельзя.
+- experience: роли в обратном хронологическом порядке, без повторов; в каждой роли пункты от самого сильного
+  к слабому (слабые будут убраны, если резюме не влезет на страницу); пункт начинается с глагола и, где есть
+  в профиле, содержит результат с цифрой.
+- skills: до 14, сначала ключевые для желаемой роли или основной профессии.
+{RULES.replace("- Язык ответа: язык вакансии.", "- Язык ответа: язык материалов кандидата.")}"""
 
 SYSTEM_LETTER = f"""Ты сильный карьерный консультант. Пишешь сопроводительное письмо под вакансию.
 150-250 слов, 3-4 абзаца, без обращения по имени (имя рекрутера неизвестно) и без подписи (её добавит шаблон).
@@ -138,6 +152,9 @@ async def revisions(session: AsyncSession, user_id: int, target_id: int) -> tupl
 
 async def build(session: AsyncSession, user: User, target: Target, items: list[str], scheme: str = "graphite",
                 instruction: str | None = None, auto: bool = False) -> Package:
+    general = intake.is_general(target)
+    if general:  # без вакансии письмо писать не о чем
+        items = [i for i in items if i != "letter"]
     items = normalize_items(items)
     if scheme not in SCHEMES:
         raise PackageError("Неизвестная цветовая схема")
@@ -156,13 +173,18 @@ async def build(session: AsyncSession, user: User, target: Target, items: list[s
         raise PackageError("Перегенерация по покрытию уже использована дважды для этой вакансии.")
 
     vacancy = await session.get(Vacancy, target.vacancy_id)
-    dossier = await package.get_dossier(session, vacancy, domain=target.company_domain)
     profile_text = profile_to_text(prof.data)
     style = prof.data.get("writing_style") or "не определён"
-    context = (f"ПРОФИЛЬ КАНДИДАТА:\n{profile_text}\nСтиль письма кандидата: {style}\n\n"
-               f"ВАКАНСИЯ: {vacancy.title} — {vacancy.company_name}\n"
-               f"Разбор: {json.dumps(target.parsed, ensure_ascii=False)}\n{vacancy.description[:8000]}\n\n"
-               f"ДОСЬЕ КОМПАНИИ:\n{json.dumps(dossier, ensure_ascii=False)}")
+    if general:
+        role = (target.parsed or {}).get("role") or ""
+        context = (f"ПРОФИЛЬ КАНДИДАТА:\n{profile_text}\nСтиль письма кандидата: {style}\n\n"
+                   f"ЖЕЛАЕМАЯ РОЛЬ: {role or 'не указана, ориентируйся на основную профессию кандидата'}")
+    else:
+        dossier = await package.get_dossier(session, vacancy, domain=target.company_domain)
+        context = (f"ПРОФИЛЬ КАНДИДАТА:\n{profile_text}\nСтиль письма кандидата: {style}\n\n"
+                   f"ВАКАНСИЯ: {vacancy.title} — {vacancy.company_name}\n"
+                   f"Разбор: {json.dumps(target.parsed, ensure_ascii=False)}\n{vacancy.description[:8000]}\n\n"
+                   f"ДОСЬЕ КОМПАНИИ:\n{json.dumps(dossier, ensure_ascii=False)}")
     if instruction:
         context += (f"\n\nПРЕДЫДУЩАЯ ВЕРСИЯ:\n{json.dumps({'cv': prev.cv, 'cover_letter': prev.cover_letter}, ensure_ascii=False)}"
                     f"\n\nПРАВКА ОТ КАНДИДАТА (примени к предыдущей версии, правила выше важнее правки): {instruction}")
@@ -171,7 +193,7 @@ async def build(session: AsyncSession, user: User, target: Target, items: list[s
     if need_cv and need_letter:
         schema, system = TailoredBoth, f"{SYSTEM_CV}\n\nПлюс сопроводительное письмо:\n{SYSTEM_LETTER}"
     elif need_cv:
-        schema, system = TailoredCV, SYSTEM_CV
+        schema, system = TailoredCV, SYSTEM_CV_GENERAL if general else SYSTEM_CV
     else:
         schema, system = TailoredLetter, SYSTEM_LETTER
     draft = await llm.structured(schema=schema, system=system, user=context, effort="high")
@@ -196,7 +218,7 @@ async def build(session: AsyncSession, user: User, target: Target, items: list[s
                   cv=cv.model_dump() if cv else {"headline": prof.data.get("headline") or ""}, cover_letter=letter, recruiter_message="",
                   fact_flags=[f.model_dump() for f in flags],
                   instruction=(AUTO + instruction) if auto and instruction else instruction)
-    if cv:  # проверка после генерации: сколько требований и ключевых слов попало в резюме
+    if cv and not general:  # проверка после генерации: сколько требований и ключевых слов попало в резюме
         try:
             from app.services import coverage
 

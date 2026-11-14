@@ -1,13 +1,17 @@
-// Этап 5 пивота: тот же сценарий, что в боте. Материалы -> вакансия -> уточнения -> документы -> схема -> фото -> файлы.
+// Мастер с развилкой в начале:
+// quick:  резюме из опыта без вакансии. Материалы (текст, голос, файлы) -> документы -> схема -> фото -> файлы.
+// target: под конкретную вакансию. Материалы -> вакансия -> уточнения -> документы -> схема -> фото -> файлы + покрытие.
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, download, getConfig, inTelegram, upload, waitJob } from "../api";
+import { api, ApiError, download, getConfig, inTelegram, upload, waitJob, type Cfg } from "../api";
+import { VoiceRecorder } from "./Profile";
 
-type Step = "materials" | "vacancy" | "answers" | "items" | "scheme" | "photo" | "result";
+type Mode = "quick" | "target";
+type Step = "start" | "materials" | "vacancy" | "answers" | "items" | "scheme" | "photo" | "result";
 type Source = { id: number; kind: string; filename: string | null; status: string; error: string | null; preview: string };
 type Question = { field: string; question: string };
 type Target = {
   id: number; title: string; company: string; company_domain: string | null;
-  parsed: { requirements?: string[] }; questions: Question[]; coverage?: Cov | null;
+  parsed: { requirements?: string[] }; questions: Question[]; coverage?: Cov | null; general?: boolean;
 };
 type Scheme = { key: string; title: string; head: string; highlight: string; signal: string };
 type Flag = { text: string; where: string; reason: string };
@@ -27,7 +31,7 @@ const ITEMS: [string, string][] = [
 const FILE_NAMES: Record<string, string> = { cv: "Резюме", one_page: "Резюме_1_страница", letter: "Сопроводительное_письмо" };
 const SAVE_KEY = "jp_make";
 
-function load(): { step?: Step; targetId?: number; items?: string[]; scheme?: string; packageId?: number } {
+function load(): { mode?: Mode; step?: Step; targetId?: number; items?: string[]; scheme?: string; packageId?: number } {
   try {
     return JSON.parse(localStorage.getItem(SAVE_KEY) || "{}");
   } catch {
@@ -37,26 +41,40 @@ function load(): { step?: Step; targetId?: number; items?: string[]; scheme?: st
 
 export default function MakePage() {
   const saved = load();
-  const [step, setStep] = useState<Step>(saved.step || "materials");
+  const [mode, setMode] = useState<Mode>(saved.mode || "target");
+  const [step, setStep] = useState<Step>(saved.step || "start");
   const [target, setTarget] = useState<Target | null>(null);
   const [items, setItems] = useState<string[]>(saved.items || ITEMS.map(([k]) => k));
   const [scheme, setScheme] = useState(saved.scheme || "graphite");
   const [packageId, setPackageId] = useState<number | undefined>(saved.packageId);
+  const [role, setRole] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [ai, setAi] = useState(true);
+  const quick = mode === "quick";
+  const itemList = quick ? ITEMS.filter(([k]) => k !== "letter") : ITEMS;  // без вакансии письмо писать не о чем
 
   useEffect(() => { getConfig().then((c) => setAi(c.ai)).catch(() => {}); }, []);
   useEffect(() => {
     try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify({ step, targetId: target?.id ?? saved.targetId, items, scheme, packageId }));
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ mode, step, targetId: target?.id ?? saved.targetId, items, scheme, packageId }));
     } catch { /* приватный режим */ }
-  }, [step, target, items, scheme, packageId]);
+  }, [mode, step, target, items, scheme, packageId]);
   useEffect(() => {
-    if (saved.targetId && !target) api<Target>(`/targets/${saved.targetId}`).then(setTarget).catch(() => setStep("vacancy"));
-    // шаг после вакансии, а вакансии нет (очистили данные, другой браузер): иначе пустой экран
-    else if (!saved.targetId && !["materials", "vacancy"].includes(step)) setStep("vacancy");
+    if (saved.targetId && !target) api<Target>(`/targets/${saved.targetId}`).then(setTarget).catch(() => setStep("start"));
+    // шаг, которому нужна цель, а её нет (очистили данные, другой браузер): иначе пустой экран
+    else if (!saved.targetId && !["start", "materials", "vacancy"].includes(step) && !(quick && step === "items"))
+      setStep(quick ? "materials" : "vacancy");
   }, []);
+
+  const choose = (m: Mode) => {
+    setMode(m);
+    setTarget(null);
+    setPackageId(undefined);
+    setItems(m === "quick" ? ["cv", "one_page"] : ITEMS.map(([k]) => k));
+    setStep("materials");
+  };
+  const restart = () => { setTarget(null); setPackageId(undefined); setStep("start"); };
 
   // busy: этапы ожидания; Working показывает их по очереди с анимацией и секундами
   const run = async (stages: string | string[], fn: () => Promise<void>, est?: number) => {
@@ -73,18 +91,20 @@ export default function MakePage() {
 
   return (
     <div className="stack">
-      <Progress step={step} />
-      {!ai && <div className="banner">ИИ пока не подключён: материалы и вакансия сохранятся, документы соберём после подключения.</div>}
+      {step !== "start" && <Progress step={step} mode={mode} />}
+      {!ai && step !== "start" && <div className="banner">ИИ пока не подключён: материалы и вакансия сохранятся, документы соберём после подключения.</div>}
       {error && !busy && <div className="banner error">{error}</div>}
       {busy && <Working key={busy} stages={busy.split("#")[0].split("|")} est={Number(busy.split("#")[1]) || undefined} />}
 
       {/* На время обработки форма шага скрыта, но не размонтирована: при ошибке введённое на месте */}
       <div className="stack" hidden={!!busy}>
+      {step === "start" && <Start onChoose={choose} />}
+
       {step === "materials" && (
-        <Materials disabled={!!busy} onNext={() => run(["Читаю ваши материалы", "Выделяю опыт и достижения", "Собираю профиль"], async () => {
+        <Materials quick={quick} disabled={!!busy} onNext={() => run(["Читаю ваши материалы", "Выделяю опыт и достижения", "Собираю профиль"], async () => {
           const r = await api<{ job_id?: number }>("/profile/build", { method: "POST", json: {} });
           if (r.job_id) await waitJob(r.job_id);
-          setStep("vacancy");
+          setStep(quick ? "items" : "vacancy");
         })} />
       )}
 
@@ -110,17 +130,32 @@ export default function MakePage() {
       {step === "items" && (
         <div className="card stack">
           <h2>Что подготовить?</h2>
-          {target && <p className="muted small">{target.title} · {target.company}</p>}
-          {ITEMS.map(([k, title]) => (
+          {target && !quick && <p className="muted small">{target.title} · {target.company}</p>}
+          {itemList.map(([k, title]) => (
             <label key={k} className="check">
               <input type="checkbox" checked={items.includes(k)}
-                onChange={() => setItems(items.includes(k) ? items.filter((i) => i !== k) : ITEMS.map(([x]) => x).filter((x) => x === k || items.includes(x)))} />
+                onChange={() => setItems(items.includes(k) ? items.filter((i) => i !== k) : itemList.map(([x]) => x).filter((x) => x === k || items.includes(x)))} />
               {title}
             </label>
           ))}
+          {quick && (
+            <label>На какую должность резюме (необязательно)
+              <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="Например: руководитель отдела продаж" />
+              <span className="muted small">Не знаете точно: оставьте пустым, соберу под вашу основную профессию.</span>
+            </label>
+          )}
+          {quick && <p className="muted small">Сопроводительное письмо пишется под конкретную вакансию: оно есть во втором пути.</p>}
           <div className="row gap">
-            <button className="btn secondary" onClick={() => setItems(ITEMS.map(([k]) => k))}>Все три</button>
-            <button className="btn" disabled={!items.length} onClick={() => setStep("scheme")}>Дальше</button>
+            <button className="btn secondary" onClick={() => setItems(itemList.map(([k]) => k))}>{quick ? "Оба" : "Все три"}</button>
+            <button className="btn" disabled={!items.some((i) => itemList.some(([k]) => k === i))}
+              onClick={() => quick
+                ? run("Готовлю черновик", async () => {
+                  setItems(items.filter((i) => i !== "letter"));
+                  setTarget(await api<Target>("/targets/general", { method: "POST", json: { role: role.trim() || null } }));
+                  setPackageId(undefined);
+                  setStep("scheme");
+                })
+                : setStep("scheme")}>Дальше</button>
           </div>
         </div>
       )}
@@ -134,27 +169,60 @@ export default function MakePage() {
 
       {step === "result" && target && (
         <Result target={target} items={items} scheme={scheme} packageId={packageId} setPackageId={setPackageId}
-          busy={busy} run={run} ai={ai} onNew={() => { setTarget(null); setPackageId(undefined); setStep("vacancy"); }} />
+          busy={busy} run={run} ai={ai} onNew={restart}
+          onTarget={quick ? () => { choose("target"); setStep("vacancy"); } : undefined} />
       )}
 
-      {step !== "materials" && step !== "result" && (
-        <button className="link" onClick={() => setStep(step === "vacancy" ? "materials" : "vacancy")}>
-          ← {step === "vacancy" ? "Добавить материалы" : "Другая вакансия"}
-        </button>
+      {step === "materials" && <button className="link" onClick={() => setStep("start")}>← Выбрать другой путь</button>}
+      {!["start", "materials", "result"].includes(step) && (
+        quick
+          ? <button className="link" onClick={() => setStep("materials")}>← Добавить материалы</button>
+          : <button className="link" onClick={() => setStep(step === "vacancy" ? "materials" : "vacancy")}>
+              ← {step === "vacancy" ? "Добавить материалы" : "Другая вакансия"}
+            </button>
       )}
       </div>
     </div>
   );
 }
 
+// Развилка в начале: быстро собрать резюме из опыта или подготовиться к конкретной вакансии
+function Start({ onChoose }: { onChoose: (m: Mode) => void }) {
+  return (
+    <div className="stack">
+      <h2 className="fork-title">Что делаем?</h2>
+      <button className="card fork" onClick={() => onChoose("quick")}>
+        <span className="fork-ico">⚡</span>
+        <span className="fork-body">
+          <b>Быстро собрать резюме из опыта</b>
+          <span className="muted small">Надиктуйте или напишите, что делали, пришлите старое резюме, заметки, любые
+            разрозненные материалы. Соберу аккуратное резюме и версию на одну страницу.</span>
+        </span>
+        <span className="fork-go">→</span>
+      </button>
+      <button className="card fork" onClick={() => onChoose("target")}>
+        <span className="fork-ico">🎯</span>
+        <span className="fork-body">
+          <b>Подготовиться к конкретной вакансии</b>
+          <span className="muted small">Пришлите вакансию: проверю, насколько ваш опыт ей соответствует, и соберу резюме,
+            резюме на одну страницу и сопроводительное письмо под её требования.</span>
+        </span>
+        <span className="fork-go">→</span>
+      </button>
+    </div>
+  );
+}
+
 const STEPS: [Step, string][] = [["materials", "О себе"], ["vacancy", "Вакансия"], ["answers", "Уточнения"],
   ["items", "Документы"], ["scheme", "Стиль"], ["photo", "Фото"], ["result", "Готово"]];
+const QUICK_STEPS = STEPS.filter(([s]) => s !== "vacancy" && s !== "answers");
 
-function Progress({ step }: { step: Step }) {
-  const i = STEPS.findIndex(([s]) => s === step);
+function Progress({ step, mode }: { step: Step; mode: Mode }) {
+  const list = mode === "quick" ? QUICK_STEPS : STEPS;
+  const i = list.findIndex(([s]) => s === step);
   return (
     <div className="steps-wrap"><div className="steps">
-      {STEPS.map(([s, t], n) => (
+      {list.map(([s, t], n) => (
         <span key={s} className={n === i ? "on" : n < i ? "done" : ""} title={t}>
           <span className="num">{n < i ? "✓" : n + 1}</span>
           <span className="lbl">{t}</span>
@@ -216,7 +284,9 @@ function NameField() {
   );
 }
 
-function Materials({ onNext, disabled }: { onNext: () => void; disabled: boolean }) {
+function Materials({ onNext, disabled, quick }: { onNext: () => void; disabled: boolean; quick: boolean }) {
+  const [cfg, setCfg] = useState<Cfg | null>(null);
+  useEffect(() => { getConfig().then(setCfg).catch(() => {}); }, []);
   const [sources, setSources] = useState<Source[]>([]);
   const [text, setText] = useState("");
   const [err, setErr] = useState("");
@@ -238,18 +308,30 @@ function Materials({ onNext, disabled }: { onNext: () => void; disabled: boolean
     }
     reload();
   };
+  const onVoice = async (b: Blob, name: string) => {
+    setErr("");
+    setWait(["Загружаю запись", "Распознаю речь", "Убираю персональные данные"]);
+    try { await upload<Source>("/sources/voice", b, name); }
+    catch (e: any) { setErr(e.message); }
+    finally { setWait(null); }
+    reload();
+  };
   const ok = sources.filter((s) => s.status === "parsed");
   return (
     <>
     {wait && <Working stages={wait} />}
     <div className="card stack" hidden={!!wait}>
-      <h2>Ваше резюме и рассказ о себе</h2>
-      <p className="muted small">Файл (PDF, DOCX), скан или фото. Плюс можно рассказать о себе: чем занимались, какие результаты с цифрами.</p>
+      <h2>{quick ? "Расскажите о своём опыте" : "Ваше резюме и рассказ о себе"}</h2>
+      <p className="muted small">{quick
+        ? "Подойдёт что угодно и в любом порядке: надиктуйте, напишите своими словами, пришлите старое резюме, скан, фото, заметки. Где работали, что делали, каких результатов добились, лучше с цифрами. Материалов может быть несколько: добавляйте по очереди."
+        : "Файл (PDF, DOCX), скан или фото. Плюс можно рассказать о себе: чем занимались, какие результаты с цифрами."}</p>
       <label className="btn secondary file">
         Загрузить файл или фото
         <input type="file" accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.webp" hidden onChange={(e) => onFile(e.target.files?.[0])} />
       </label>
-      <textarea rows={4} placeholder="Расскажите о себе" value={text} onChange={(e) => setText(e.target.value)} />
+      {cfg?.voice && <VoiceRecorder onDone={onVoice} />}
+      {cfg && !cfg.voice && quick && <p className="muted small">🎙 Голос в приложении пока не подключён: напишите текстом или надиктуйте боту в Telegram.</p>}
+      <textarea rows={quick ? 6 : 4} placeholder={quick ? "Например: 2019–2024 руководила отделом продаж в дистрибьюторе, команда 12 человек, выручка выросла на 40%…" : "Расскажите о себе"} value={text} onChange={(e) => setText(e.target.value)} />
       <button className="btn secondary" disabled={!text.trim()} onClick={async () => {
         await api("/sources/text", { method: "POST", json: { text } });
         setText("");
@@ -425,9 +507,9 @@ function Photo({ onNext, disabled }: { onNext: () => void; disabled: boolean }) 
 
 function Result(props: {
   target: Target; items: string[]; scheme: string; packageId?: number; setPackageId: (id: number) => void;
-  busy: string; run: (stages: string | string[], fn: () => Promise<void>, est?: number) => Promise<void>; ai: boolean; onNew: () => void;
+  busy: string; run: (stages: string | string[], fn: () => Promise<void>, est?: number) => Promise<void>; ai: boolean; onNew: () => void; onTarget?: () => void;
 }) {
-  const { target, items, scheme, packageId, setPackageId, busy, run, ai, onNew } = props;
+  const { target, items, scheme, packageId, setPackageId, busy, run, ai, onNew, onTarget } = props;
   const [pkg, setPkg] = useState<Pkg | null>(null);
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [accept, setAccept] = useState(false);
@@ -460,7 +542,9 @@ function Result(props: {
 
   const generate = (instr?: string) => run(instr
     ? ["Вношу правку", "Перепроверяю факты", "Собираю PDF"]
-    : ["Изучаю компанию", "Пишу резюме под вакансию", "Пишу письмо", "Проверяю каждый факт по профилю", "Собираю PDF"], async () => {
+    : target.general
+      ? ["Навожу порядок в опыте", "Пишу резюме", "Проверяю каждый факт по профилю", "Собираю PDF"]
+      : ["Изучаю компанию", "Пишу резюме под вакансию", "Пишу письмо", "Проверяю каждый факт по профилю", "Собираю PDF"], async () => {
     const r = await api<{ job_id?: number; stub?: boolean; message?: string }>(`/targets/${target.id}/package`, {
       method: "POST", json: { items, scheme: pkg?.scheme || scheme, instruction: instr || null } });
     if (r.stub) throw new Error(r.message || "ИИ не подключён");
@@ -497,7 +581,7 @@ function Result(props: {
       <div className="card stack">
         <p>Всё сохранено: материалы, вакансия, выбор документов и стиль. Документы пишет ИИ, а он пока не подключён.
           Вернитесь сюда после подключения, и пакет соберётся с этого шага.</p>
-        <button className="btn secondary" onClick={onNew}>Другая вакансия</button>
+        <button className="btn secondary" onClick={onNew}>В начало</button>
       </div>
     );
   }
@@ -507,7 +591,7 @@ function Result(props: {
   return (
     <div className="stack">
       <div className="card stack">
-        <h2>{target.title} · {target.company}</h2>
+        <h2>{target.general ? `Резюме: ${target.title}` : `${target.title} · ${target.company}`}</h2>
         {cvFlags.length > 0 && (
           <div className="banner">Убрал из резюме то, что не подтверждается вашим профилем:
             <ul>{cvFlags.map((f) => <li key={f.text}>{f.text}</li>)}</ul></div>
@@ -574,7 +658,15 @@ function Result(props: {
           <button className="btn" disabled={!instruction.trim() || !!busy} onClick={() => generate(instruction.trim())}>Внести правку</button>
         </div>
       )}
-      <button className="btn secondary" onClick={onNew}>Новая вакансия</button>
+      {onTarget && (
+        <div className="card stack">
+          <h2>Есть конкретная вакансия?</h2>
+          <p className="muted small">Проверю, насколько ваш опыт подходит под её требования, и соберу документы под неё,
+            включая сопроводительное письмо. Материалы уже есть, начнём сразу с вакансии.</p>
+          <button className="btn" onClick={onTarget}>Подготовиться к вакансии</button>
+        </div>
+      )}
+      <button className="btn secondary" onClick={onNew}>{onTarget ? "В начало" : "Новая вакансия"}</button>
     </div>
   );
 }

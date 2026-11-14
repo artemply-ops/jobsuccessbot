@@ -291,10 +291,36 @@ async def answer(session: AsyncSession, user: User, target: Target, text: str) -
     await session.flush()
 
 
+GENERAL = "general"  # Target.parsed[GENERAL] = True: резюме по опыту, без конкретной вакансии
+
+
+def is_general(target: Target) -> bool:
+    return bool((target.parsed or {}).get(GENERAL))
+
+
+async def add_general_target(session: AsyncSession, user: User, role: str | None = None) -> Target:
+    """Быстрый путь «собрать резюме из опыта»: цель без вакансии. Вакансия-заглушка нужна только потому, что пакет
+    ссылается на vacancy_id; в генерацию она не попадает. Каждый запуск отдельной целью: своя правка и версии."""
+    import uuid
+
+    role = (role or "").strip()[:200]
+    prof = await profile.latest_profile(session, user.id)
+    title = role or ((prof.data.get("headline") if prof else "") or "Резюме")
+    vacancy = Vacancy(fingerprint=f"general:{user.id}:{uuid.uuid4().hex[:12]}", company_name="", title=title,
+                      url=f"general:{user.id}", description="")
+    session.add(vacancy)
+    await session.flush()
+    target = Target(user_id=user.id, vacancy_id=vacancy.id, parsed={GENERAL: True, "role": role},
+                    questions=[], answered=True)
+    session.add(target)
+    await session.flush()
+    return target
+
+
 def view(target: Target, vacancy: Vacancy, dossier_data: dict | None = None) -> dict:
     return {"id": target.id, "vacancy_id": vacancy.id, "title": vacancy.title, "company": vacancy.company_name,
             "source_url": target.source_url, "company_domain": target.company_domain, "parsed": target.parsed,
             "questions": target.questions, "answered": target.answered, "dossier": dossier_data,
-            "coverage": target.coverage,
+            "coverage": target.coverage, "general": is_general(target),
             "ai": llm.available(), "created_at": target.created_at}
 

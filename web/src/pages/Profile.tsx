@@ -258,7 +258,7 @@ function Contacts({ me, onSaved }: { me: Me; onSaved: () => void }) {
   );
 }
 
-function VoiceRecorder({ onDone }: { onDone: (b: Blob, name: string) => void }) {
+export function VoiceRecorder({ onDone }: { onDone: (b: Blob, name: string) => void }) {
   const [rec, setRec] = useState<MediaRecorder | null>(null);
   const [sec, setSec] = useState(0);
   const timer = useRef<number | undefined>(undefined);
