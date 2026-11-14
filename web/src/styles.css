@@ -113,11 +113,18 @@ label.check input { width: auto; }
 input[type="range"] { width: 140px; padding: 0; }
 
 /* Мастер «резюме под вакансию» (pages/Make.tsx) */
-.steps { display: flex; gap: 4px; overflow-x: auto; font-size: 12px; padding-bottom: 2px; }
-.steps span { flex: 1; min-width: 64px; text-align: center; padding: 6px 4px; border-radius: 8px; color: var(--muted);
-  background: var(--bg); border: 1px solid var(--border); white-space: nowrap; }
-.steps span.done { color: var(--ok); }
-.steps span.on { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+/* Ширина шага по содержимому: длинные названия («Уточнения», «Документы») не вылезают за рамку.
+   На узком экране у неактивных шагов только номер, название видно у текущего шага. */
+.steps { display: flex; gap: 4px; font-size: 12px; }
+.steps > span { flex: 1 1 auto; min-width: 0; display: inline-flex; justify-content: center; align-items: center; gap: 4px;
+  padding: 6px 8px; border-radius: 8px; color: var(--muted); background: var(--bg); border: 1px solid var(--border);
+  white-space: nowrap; }
+.steps > span .num { font-weight: 600; }
+.steps > span.done { color: var(--ok); }
+.steps > span.on { flex: 0 0 auto; color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+@media (max-width: 640px) {
+  .steps > span:not(.on) .lbl { display: none; }
+}
 .schemes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .scheme { display: flex; flex-direction: column; gap: 6px; align-items: stretch; padding: 8px; border-radius: 12px;
   border: 2px solid var(--border); background: var(--bg2); color: var(--text); font: inherit; cursor: pointer; text-align: left; }

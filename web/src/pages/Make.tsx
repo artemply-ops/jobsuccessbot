@@ -142,7 +142,12 @@ function Progress({ step }: { step: Step }) {
   const i = STEPS.findIndex(([s]) => s === step);
   return (
     <div className="steps">
-      {STEPS.map(([s, t], n) => <span key={s} className={n === i ? "on" : n < i ? "done" : ""}>{t}</span>)}
+      {STEPS.map(([s, t], n) => (
+        <span key={s} className={n === i ? "on" : n < i ? "done" : ""} title={t}>
+          <span className="num">{n < i ? "✓" : n + 1}</span>
+          <span className="lbl">{t}</span>
+        </span>
+      ))}
     </div>
   );
 }
