@@ -26,6 +26,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; background: var(--bg2); color: var(--text);
   font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 h1, h2, h3 { margin: 0; line-height: 1.25; }
@@ -149,7 +150,29 @@ input[type="range"] { width: 140px; padding: 0; }
 @keyframes jp-spin { to { transform: rotate(360deg); } }
 @keyframes jp-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
 @keyframes jp-fade { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .spinner, .wbar span, .working .stage { animation: none; } }
+/* Экран ожидания: на время обработки поля ввода скрыты, видно только, что идёт работа */
+.wait { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; text-align: center;
+  min-height: min(62vh, 520px); padding: 28px 18px; animation: jp-fade .3s ease; }
+.wait-orb { position: relative; width: 92px; height: 92px; flex: none; }
+.wait-orb > span { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--accent); opacity: 0;
+  animation: jp-pulse 2.4s ease-out infinite; }
+.wait-orb > span:nth-child(2) { animation-delay: .8s; }
+.wait-orb > span:nth-child(3) { animation-delay: 1.6s; }
+.wait-orb::after { content: ""; position: absolute; inset: 24px; border-radius: 50%;
+  border: 4px solid color-mix(in srgb, var(--accent) 22%, transparent); border-top-color: var(--accent); animation: jp-spin .9s linear infinite; }
+.wait-title { margin: 0; font-size: 19px; animation: jp-fade .4s ease; }
+.wait-steps { list-style: none; margin: 0; padding: 0; width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 9px; text-align: left; }
+.wait-steps li { display: flex; align-items: center; gap: 10px; color: var(--muted); transition: color .3s; }
+.wait-steps li .mk { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--border);
+  display: grid; place-items: center; font-size: 12px; line-height: 1; }
+.wait-steps li.on { color: var(--text); font-weight: 600; }
+.wait-steps li.on .mk { border-color: color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent); animation: jp-spin .9s linear infinite; }
+.wait-steps li.done { color: var(--text); }
+.wait-steps li.done .mk { background: var(--ok); border-color: var(--ok); color: #fff; }
+.wait .wbar { width: 100%; max-width: 360px; }
+.wait .hint { margin: 0; max-width: 360px; }
+@keyframes jp-pulse { 0% { transform: scale(.45); opacity: .75; } 100% { transform: scale(1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .spinner, .wbar span, .working .stage, .wait-orb > span, .wait-orb::after, .wait-steps li.on .mk, .wait-title { animation: none; } }
 
 .banner.ok { background: color-mix(in srgb, var(--ok) 14%, var(--bg)); }
 textarea.attention { border-color: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 18%, transparent); }

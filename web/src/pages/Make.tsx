@@ -59,8 +59,8 @@ export default function MakePage() {
   }, []);
 
   // busy: этапы ожидания; Working показывает их по очереди с анимацией и секундами
-  const run = async (stages: string | string[], fn: () => Promise<void>) => {
-    setBusy(Array.isArray(stages) ? stages.join("|") : stages);
+  const run = async (stages: string | string[], fn: () => Promise<void>, est?: number) => {
+    setBusy((Array.isArray(stages) ? stages.join("|") : stages) + (est ? `#${est}` : ""));
     setError("");
     try {
       await fn();
@@ -75,9 +75,11 @@ export default function MakePage() {
     <div className="stack">
       <Progress step={step} />
       {!ai && <div className="banner">ИИ пока не подключён: материалы и вакансия сохранятся, документы соберём после подключения.</div>}
-      {error && <div className="banner error">{error}</div>}
-      {busy && <Working stages={busy.split("|")} />}
+      {error && !busy && <div className="banner error">{error}</div>}
+      {busy && <Working key={busy} stages={busy.split("#")[0].split("|")} est={Number(busy.split("#")[1]) || undefined} />}
 
+      {/* На время обработки форма шага скрыта, но не размонтирована: при ошибке введённое на месте */}
+      <div className="stack" hidden={!!busy}>
       {step === "materials" && (
         <Materials disabled={!!busy} onNext={() => run(["Читаю ваши материалы", "Выделяю опыт и достижения", "Собираю профиль"], async () => {
           const r = await api<{ job_id?: number }>("/profile/build", { method: "POST", json: {} });
@@ -140,6 +142,7 @@ export default function MakePage() {
           ← {step === "vacancy" ? "Добавить материалы" : "Другая вакансия"}
         </button>
       )}
+      </div>
     </div>
   );
 }
@@ -161,25 +164,30 @@ function Progress({ step }: { step: Step }) {
   );
 }
 
-// Анимированный статус, пока ждём модель: этапы по очереди, полоса, секунды
-function Working({ stages }: { stages: string[] }) {
+// Экран ожидания: вместо формы шага. Этапы по очереди (галочки), анимация, секунды; после ответа сразу следующий шаг.
+// est: типичная длительность в секундах (замер на живых прогонах), по ней темп смены этапов
+function Working({ stages, est }: { stages: string[]; est?: number }) {
   const [sec, setSec] = useState(0);
   useEffect(() => {
+    window.scrollTo({ top: 0 });
     const t = setInterval(() => setSec((s) => s + 1), 1000);
     return () => clearInterval(t);
   }, []);
-  const i = Math.min(Math.floor(sec / 4), stages.length - 1);
+  const pace = est ? Math.max(3, Math.round(est / stages.length)) : 4;
+  const i = Math.min(Math.floor(sec / pace), stages.length - 1);
   return (
-    <div className="working" role="status" aria-live="polite">
-      <span className="spinner" />
-      <div className="grow">
-        <div className="stage" key={i}>{stages[i]}…</div>
-        <div className="dots">
-          {stages.length > 1 && stages.map((s, n) => <span key={s} className={n <= i ? "on" : ""} />)}
-          <span className="muted small">{sec} с</span>
-        </div>
-        <div className="wbar"><span /></div>
-      </div>
+    <div className="card wait" role="status" aria-live="polite">
+      <div className="wait-orb"><span /><span /><span /></div>
+      <h2 className="wait-title" key={i}>{stages[i]}…</h2>
+      {stages.length > 1 && (
+        <ol className="wait-steps">
+          {stages.map((s, n) => (
+            <li key={s} className={n < i ? "done" : n === i ? "on" : ""}><span className="mk">{n < i ? "✓" : ""}</span>{s}</li>
+          ))}
+        </ol>
+      )}
+      <div className="wbar"><span /></div>
+      <p className="muted small hint">{sec} с{est ? ` · обычно около ${est} с` : ""}. Ничего нажимать не нужно: как закончу, сразу перейду дальше.</p>
     </div>
   );
 }
@@ -215,20 +223,26 @@ function Materials({ onNext, disabled }: { onNext: () => void; disabled: boolean
   const [nameKey, setNameKey] = useState(0);  // после загрузки файла имя могло определиться: перечитываем
   const reload = () => api<Source[]>("/sources").then(setSources).then(() => setNameKey((k) => k + 1)).catch(() => {});
   useEffect(() => { reload(); }, []);
+  const [wait, setWait] = useState<string[] | null>(null);  // экран ожидания вместо формы
   const onFile = async (f: File | undefined) => {
     if (!f) return;
     setErr("");
+    setWait(["Загружаю файл", "Читаю текст", "Убираю персональные данные"]);
     try {
       const s = await upload<Source>("/sources/file", f, f.name);
       if (s.status === "error") setErr(s.error || "Не удалось прочитать файл");
     } catch (e: any) {
       setErr(e.message);
+    } finally {
+      setWait(null);
     }
     reload();
   };
   const ok = sources.filter((s) => s.status === "parsed");
   return (
-    <div className="card stack">
+    <>
+    {wait && <Working stages={wait} />}
+    <div className="card stack" hidden={!!wait}>
       <h2>Ваше резюме и рассказ о себе</h2>
       <p className="muted small">Файл (PDF, DOCX), скан или фото. Плюс можно рассказать о себе: чем занимались, какие результаты с цифрами.</p>
       <label className="btn secondary file">
@@ -248,9 +262,10 @@ function Materials({ onNext, disabled }: { onNext: () => void; disabled: boolean
         </ul>
       )}
       {ok.length > 0 && <NameField key={nameKey} />}
-      {ok.length > 0 && <ReviewBox />}
+      {ok.length > 0 && <ReviewBox onWait={setWait} />}
       <button className="btn" disabled={!ok.length || disabled} onClick={onNext}>Дальше</button>
     </div>
+    </>
   );
 }
 
@@ -279,7 +294,9 @@ function Vacancy({ onSubmit, disabled }: { onSubmit: (url: string, text: string,
   };
   const useUrl = !!url.trim() && check?.ok && !text.trim();
   return (
-    <div className="card stack">
+    <>
+    {checking && <Working stages={["Открываю ссылку", "Проверяю, читается ли страница"]} />}
+    <div className="card stack" hidden={checking}>
       <h2>Вакансия</h2>
       <label>Ссылка на вакансию на сайте компании
         <div className="row gap">
@@ -289,7 +306,6 @@ function Vacancy({ onSubmit, disabled }: { onSubmit: (url: string, text: string,
           </button>
         </div>
       </label>
-      {checking && <Working stages={["Проверяю, читается ли страница"]} />}
       {check?.ok && <div className="banner ok">✓ Страница читается{check.title ? `: «${check.title}»` : ""}</div>}
       {check && !check.ok && (
         <div className="banner error">
@@ -309,6 +325,7 @@ function Vacancy({ onSubmit, disabled }: { onSubmit: (url: string, text: string,
         Дальше
       </button>
     </div>
+    </>
   );
 }
 
@@ -408,7 +425,7 @@ function Photo({ onNext, disabled }: { onNext: () => void; disabled: boolean }) 
 
 function Result(props: {
   target: Target; items: string[]; scheme: string; packageId?: number; setPackageId: (id: number) => void;
-  busy: string; run: (stages: string | string[], fn: () => Promise<void>) => Promise<void>; ai: boolean; onNew: () => void;
+  busy: string; run: (stages: string | string[], fn: () => Promise<void>, est?: number) => Promise<void>; ai: boolean; onNew: () => void;
 }) {
   const { target, items, scheme, packageId, setPackageId, busy, run, ai, onNew } = props;
   const [pkg, setPkg] = useState<Pkg | null>(null);
@@ -450,7 +467,7 @@ function Result(props: {
     const j = await waitJob(r.job_id!);
     setPackageId(j.result.package_id);
     setInstruction("");
-  });
+  }, 45);  // живой прогон: около 47 с на пакет
 
   const loadPkg = async (id: number) => {
     const p = await api<Pkg>(`/packages/${id}`);
@@ -546,7 +563,7 @@ function Result(props: {
             if (r.stub) throw new Error(r.message || "ИИ не подключён");
             const j = await waitJob(r.job_id!);
             setPackageId(j.result.package_id);
-          })} />
+          }, 45)} />
       )}
 
       {pkg.revision_left && (
@@ -611,20 +628,18 @@ function CoverageCard({ cov, before, left, busy, onImprove }: {
 }
 
 // Проверка резюме без вакансии: оценка и конкретные правки
-function ReviewBox() {
+function ReviewBox({ onWait }: { onWait: (stages: string[] | null) => void }) {
   const [res, setRes] = useState<ReviewRes | null>(null);
-  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const go = async () => {
-    setLoading(true); setErr("");
+    onWait(["Читаю резюме", "Проверяю цифры, даты и структуру", "Готовлю советы"]); setErr("");
     try { setRes(await api<ReviewRes>("/review", { method: "POST" })); }
     catch (e: any) { setErr(e.message); }
-    finally { setLoading(false); }
+    finally { onWait(null); }
   };
   return (
     <div className="stack small-gap">
-      {!res && !loading && <button className="btn secondary" onClick={go}>Проверить резюме без вакансии</button>}
-      {loading && <Working stages={["Читаю резюме", "Проверяю цифры, даты и структуру", "Готовлю советы"]} />}
+      {!res && <button className="btn secondary" onClick={go}>Проверить резюме без вакансии</button>}
       {err && <p className="error">{err}</p>}
       {res && (
         <div className="review">
