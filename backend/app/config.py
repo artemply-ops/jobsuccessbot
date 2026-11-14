@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     env: str = "dev"  # dev | prod
     database_url: str = f"sqlite+aiosqlite:///{(ROOT / 'data' / 'jobpilot.db').as_posix()}"
     files_dir: Path = ROOT / "data" / "files"
+    log_dir: Path = ROOT / "data" / "logs"  # errors.log с ротацией (app/logs.py)
     web_dist: Path = ROOT / "web" / "dist"
     public_url: str = "http://localhost:8000"
 

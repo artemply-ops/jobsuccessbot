@@ -41,6 +41,7 @@ async def enqueue(kind: str, user_id: int | None, fn: JobFn) -> int:
                 await s.commit()
                 j.status, j.result = "done", result or {}
             except (ValueError, LLMError) as e:
+                log.warning("job %s (%s) error: %s: %s", job_id, kind, type(e).__name__, e)
                 await s.rollback()
                 j = await s.get(Job, job_id)
                 j.status, j.note = "error", str(e)

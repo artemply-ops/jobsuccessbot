@@ -13,11 +13,12 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import (BotCommand, BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
-                           MenuButtonWebApp, Message, WebAppInfo)
+from aiogram.types import (BotCommand, BufferedInputFile, CallbackQuery, ErrorEvent, InlineKeyboardButton,
+                           InlineKeyboardMarkup, MenuButtonWebApp, Message, WebAppInfo)
 from sqlalchemy import func, select
 
 from app.auth import upsert_tg_user
+from app.bot import cv_flow
 from app.config import get_settings
 from app.db import SessionLocal, init_db
 from app.jobs import build_profile_job, package_job, search_job
@@ -29,6 +30,7 @@ from app.tg import make_bot
 
 log = logging.getLogger("bot")
 dp = Dispatcher()
+dp.include_router(cv_flow.router)
 MAX_FILE = 15 * 1024 * 1024
 
 
@@ -37,25 +39,25 @@ class Basic(StatesGroup):
 
 
 CONSENT_TEXT = (
-    "Привет! Я помогу найти работу: соберу ваш профиль из резюме и голосовых, найду подходящие вакансии "
-    "и подготовлю CV и сопроводительное письмо под каждую.\n\n"
+    "Привет! Я сделаю резюме и сопроводительное письмо под конкретную вакансию: из вашего резюме, "
+    "рассказа о себе и описания вакансии.\n\n"
     "Для этого мне нужно обрабатывать ваши персональные данные: резюме, контакты, голосовые сообщения. "
     "Данные хранятся в России. Во внешнюю ИИ-модель уходит только обезличенный текст, без имени и контактов.\n\n"
     "Согласны на обработку персональных данных?"
 )
 HELP = (
     "<b>Как пользоваться</b>\n"
-    "1. Пришлите резюме (PDF, DOCX, TXT), отзывы, описание проектов. Можно голосовыми до 30 секунд или текстом.\n"
-    "2. /profile соберёт профиль и задаст уточняющие вопросы. Отвечайте просто сообщением.\n"
-    "3. /search найдёт и оценит вакансии.\n"
-    "4. /vacancies покажет лучшие, по кнопке соберу CV и письмо под вакансию.\n"
-    "/companies подходящие компании · /contacts ваши ФИО и контакты для CV"
+    "1. Пришлите резюме: файл, скан или фото. Можно добавить рассказ о себе текстом или голосом.\n"
+    "2. Пришлите вакансию: ссылку на сайт компании или текст.\n"
+    "3. Ответьте на 2-3 уточнения, выберите документы, цветовую схему и фото.\n"
+    "4. Получите резюме, резюме на одну страницу и письмо в одном стиле. Одна правка входит в пакет.\n\n"
+    "/start начать заново · /new новая вакансия · /contacts ФИО и контакты для резюме"
 )
 STUB = "🤖 <i>{what} работает на ИИ, а ИИ пока не подключён.</i>"
 BASIC_ASK = ("Чтобы уже сейчас искать вакансии, напишите одной строкой должность и город, можно ещё зарплату "
              "и формат. Например:\n<code>Python-разработчик, Москва, 250000, удалёнка</code>")
-COMMANDS = [("start", "Начало"), ("profile", "Профиль"), ("search", "Найти вакансии"),
-            ("vacancies", "Лучшие вакансии"), ("companies", "Компании"), ("contacts", "Контакты для CV"),
+# Пивот 08.11: в меню только сценарий резюме. /search, /vacancies, /companies, /profile работают, но скрыты
+COMMANDS = [("start", "Сделать резюме"), ("new", "Новая вакансия"), ("contacts", "Контакты для резюме"),
             ("help", "Помощь")]
 
 
@@ -96,8 +98,24 @@ async def run_job(fn) -> dict:
             raise
 
 
+@dp.errors()
+async def on_error(event: ErrorEvent):
+    """Всё, что не поймали хендлеры: в лог с трассировкой и id чата, пользователю короткое сообщение."""
+    upd = event.update
+    chat = upd.message.chat.id if upd.message else (upd.callback_query.from_user.id if upd.callback_query else None)
+    log.error("unhandled bot error: update=%s chat=%s", upd.update_id, chat, exc_info=event.exception)
+    try:
+        target = upd.message or (upd.callback_query.message if upd.callback_query else None)
+        if target:
+            await target.answer("⚠️ Что-то пошло не так. Попробуйте ещё раз чуть позже.")
+    except Exception:
+        log.exception("could not notify user about error")
+    return True
+
+
 async def report_error(message: Message, e: Exception):
     if isinstance(e, (ValueError, LLMError, STTError)):
+        log.warning("bot: chat=%s %s: %s", message.chat.id, type(e).__name__, e)
         await message.answer(f"⚠️ {html.escape(str(e))}")
     else:
         log.exception("bot error")
@@ -112,18 +130,18 @@ async def start(message: Message, state: FSMContext):
     user = await get_user(message.from_user)
     if await need_consent(message, user):
         return
-    await message.answer(HELP, reply_markup=webapp_kb("", "Открыть приложение"))
+    await cv_flow.start_flow(message, state)
 
 
 @dp.callback_query(F.data == "consent")
-async def on_consent(cb: CallbackQuery):
+async def on_consent(cb: CallbackQuery, state: FSMContext):
     async with SessionLocal() as s:
         u = (await s.execute(select(User).where(User.tg_id == cb.from_user.id))).scalar_one()
         u.consent_at = datetime.now(timezone.utc)
         await s.commit()
     await cb.message.edit_text("Спасибо, согласие получено.")
-    await cb.message.answer(HELP, reply_markup=webapp_kb("", "Открыть приложение"))
     await cb.answer()
+    await cv_flow.start_flow(cb.message, state)
 
 
 @dp.message(Command("help"))
@@ -158,7 +176,7 @@ async def contacts_cmd(message: Message):
 # ---------- Материалы ----------
 
 @dp.message(F.document)
-async def on_document(message: Message, bot: Bot):
+async def on_document(message: Message, bot: Bot, state: FSMContext):
     user = await get_user(message.from_user)
     if await need_consent(message, user):
         return
@@ -166,19 +184,43 @@ async def on_document(message: Message, bot: Bot):
     if doc.file_size and doc.file_size > MAX_FILE:
         await message.answer("Файл больше 15 МБ, пришлите поменьше.")
         return
-    buf = await bot.download(doc)
-    async with SessionLocal() as s:
-        src = await profile.add_file_source(s, await s.get(User, user.id), doc.file_name or "file", buf.read())
-        await s.commit()
+    await _save_file(message, state, user, doc.file_name or "file", (await bot.download(doc)).read())
+
+
+async def _save_file(message: Message, state: FSMContext, user: User, filename: str, data: bytes):
+    if filename.lower().rsplit(".", 1)[-1] in ("pdf", "jpg", "jpeg", "png", "webp"):
+        await message.answer("Читаю документ…")
+    try:
+        async with SessionLocal() as s:
+            src = await profile.add_file_source(s, await s.get(User, user.id), filename, data)
+            await s.commit()
+    except Exception as e:
+        await report_error(message, e)
+        return
     if src.status == "error":
+        log.warning("file not parsed: chat=%s ext=%s: %s", message.chat.id, filename.rsplit(".", 1)[-1], src.error)
         await message.answer(f"⚠️ {html.escape(src.error or 'Не удалось прочитать файл')}")
-    else:
-        await message.answer(f"📄 Принял «{html.escape(doc.file_name or 'файл')}» ({len(src.text or '')} символов). "
-                             "Пришлите ещё материалы или переходите к профилю: /profile")
+        return
+    if await state.get_state() is None:
+        await state.set_state(cv_flow.CV.materials)
+    await message.answer(f"📄 Принял ({len(src.text or '')} символов). Пришлите ещё материалы или нажмите «Готово».",
+                         reply_markup=cv_flow.done_kb())
+
+
+@dp.message(F.photo)
+async def on_photo(message: Message, bot: Bot, state: FSMContext):
+    """Фото: на шаге фото это фото для резюме, иначе скан документа."""
+    if await state.get_state() == cv_flow.CV.photo.state:
+        await cv_flow.on_photo(message, state, bot)
+        return
+    user = await get_user(message.from_user)
+    if await need_consent(message, user):
+        return
+    await _save_file(message, state, user, "photo.jpg", (await bot.download(message.photo[-1])).read())
 
 
 @dp.message(F.voice)
-async def on_voice(message: Message, bot: Bot):
+async def on_voice(message: Message, bot: Bot, state: FSMContext):
     user = await get_user(message.from_user)
     if await need_consent(message, user):
         return
@@ -194,7 +236,10 @@ async def on_voice(message: Message, bot: Bot):
     if not text.strip():
         await message.answer("Не расслышал, попробуйте ещё раз.")
         return
-    await _save_text(message, user, text, kind="voice")
+    await message.answer(f"🎙 Распознал: «{html.escape(text[:300])}»")
+    if await cv_flow.handle_text(message, state, text, kind="voice"):
+        return
+    await _save_text(message, user, text, kind="voice", state=state)
 
 
 @dp.message(Basic.waiting, F.text & ~F.text.startswith("/"))
@@ -213,14 +258,26 @@ async def on_basic(message: Message, state: FSMContext):
 
 
 @dp.message(F.text & ~F.text.startswith("/"))
-async def on_text(message: Message):
+async def on_text(message: Message, state: FSMContext):
     user = await get_user(message.from_user)
     if await need_consent(message, user):
         return
-    await _save_text(message, user, message.text)
+    if await cv_flow.handle_text(message, state, message.text):
+        return
+    if await state.get_state() is None and cv_flow.is_url(message.text):  # ссылка вне сценария: это вакансия
+        await cv_flow.take_vacancy(message, state, message.text)
+        return
+    await _save_text(message, user, message.text, state=state)
 
 
-async def _save_text(message: Message, user: User, text: str, kind: str = "text"):
+async def _save_text(message: Message, user: User, text: str, kind: str = "text", state: FSMContext | None = None):
+    if state is not None and await state.get_state() in (None, cv_flow.CV.materials.state):
+        async with SessionLocal() as s:
+            await profile.add_text_source(s, await s.get(User, user.id), text, kind=kind)
+            await s.commit()
+        await state.set_state(cv_flow.CV.materials)
+        await message.answer("Записал. Пришлите ещё или нажмите «Готово».", reply_markup=cv_flow.done_kb())
+        return
     async with SessionLocal() as s:
         u = await s.get(User, user.id)
         src = await profile.add_text_source(s, u, text, kind=kind)

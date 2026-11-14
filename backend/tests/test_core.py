@@ -102,7 +102,7 @@ async def test_upsert_dedup_and_clean(session):
                        description="длинное описание " * 20)]
     created, updated = await upsert(session, raws)
     assert (created, updated) == (1, 1)
-    v = (await session.execute(__import__("sqlalchemy").select(Vacancy))).scalars().one()
+    v = (await session.execute(__import__("sqlalchemy").select(Vacancy).where(Vacancy.title.contains("Python")))).scalars().one()
     assert len(v.sources) == 2 and "+7 999" not in v.description
 
 

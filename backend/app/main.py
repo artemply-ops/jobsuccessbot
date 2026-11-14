@@ -2,15 +2,17 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import api
 from app.config import get_settings
 from app.db import init_db
+from app.logs import setup_logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+setup_logging()
+log = logging.getLogger("api")
 
 
 @asynccontextmanager
@@ -33,6 +35,13 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="JobPilot", lifespan=lifespan)
 app.include_router(api)
+
+
+@app.exception_handler(Exception)
+async def unhandled(request: Request, exc: Exception):
+    """Необработанная ошибка API: в лог с трассировкой (метод и путь, без тела запроса), клиенту 500."""
+    log.error("unhandled %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse({"detail": "Внутренняя ошибка. Мы уже видим её в логах."}, status_code=500)
 
 
 @app.get("/health")

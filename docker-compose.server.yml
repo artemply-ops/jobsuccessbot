@@ -22,6 +22,7 @@ services:
       ENV: prod
       DATABASE_URL: postgresql+asyncpg://jobpilot:${POSTGRES_PASSWORD}@db:5432/jobpilot
       FILES_DIR: /data/files
+      LOG_DIR: /data/files/_logs
       RUN_SCHEDULER: "true"
       RUN_BOT_IN_API: "true"
     volumes: [files:/data/files]
