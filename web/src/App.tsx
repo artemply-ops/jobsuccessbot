@@ -2,9 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { api, inTelegram, login, setToken } from "./api";
 import ProfilePage from "./pages/Profile";
-import VacanciesPage from "./pages/Vacancies";
-import VacancyPage from "./pages/Vacancy";
-import CompaniesPage from "./pages/Companies";
 import MakePage from "./pages/Make";
 
 export type Me = {
@@ -59,14 +56,11 @@ export default function App() {
           <Route path="/" element={<Navigate to="/make" replace />} />
           <Route path="/make" element={<MakePage />} />
           <Route path="/profile" element={<ProfilePage me={me!} onMeChange={loadMe} />} />
-          <Route path="/vacancies" element={<VacanciesPage />} />
-          <Route path="/vacancies/:id" element={<VacancyPage />} />
-          <Route path="/companies" element={<CompaniesPage />} />
           <Route path="*" element={<Navigate to="/make" replace />} />
         </Routes>
       </main>
       <nav className="tabbar">
-        {/* Пивот 08.11: в меню только резюме и профиль; вакансии и компании доступны по прямой ссылке */}
+        {/* Пивот 08.11: поиск вакансий и каталог компаний скрыты (pages/Vacancies, Vacancy, Companies не подключены) */}
         <NavLink to="/make">Резюме</NavLink>
         <NavLink to="/profile">Профиль</NavLink>
       </nav>

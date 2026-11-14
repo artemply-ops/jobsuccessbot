@@ -211,7 +211,9 @@ async def test_flow_without_ai(session):
         assert (await c.get("/api/config")).json()["ai"] is False
         await c.post("/api/me/consent", headers=h)
         assert (await c.post("/api/profile/build", json={}, headers=h)).json()["stub"] is True
-        assert (await c.post("/api/vacancies/1/package", json={}, headers=h)).json()["stub"] is True
+        assert (await c.post("/api/vacancies/1/package", json={}, headers=h)).status_code == 404  # поиск выключен
+        assert (await c.get("/api/vacancies", headers=h)).status_code == 404
+        assert (await c.get("/api/schemes", headers=h)).status_code == 200
         r = await c.post("/api/sources/voice", files={"file": ("v.ogg", b"x")}, headers=h)
         assert r.status_code == 422 and "не подключено" in r.json()["detail"]
 

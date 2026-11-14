@@ -112,6 +112,10 @@ def tailor_job(user_id: int, target_id: int, items: list[str], scheme: str, inst
 
 async def daily_refresh() -> dict:
     """Ежедневно: проверка каталога, сбор с карьерных страниц, пересчёт для всех пользователей с профилем."""
+    from app.config import get_settings
+
+    if not get_settings().search_enabled:  # пивот 08.11: поиск выключен, LLM на разбор страниц не тратим
+        return {"skipped": "search disabled"}
     async with SessionLocal() as s:
         seeded = await collect.load_seed(s)  # новые компании из посевного файла, существующие не трогает
         await s.commit()

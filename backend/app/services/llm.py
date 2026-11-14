@@ -47,14 +47,22 @@ def strict_schema(model: type[BaseModel]) -> dict:
     schema = copy.deepcopy(model.model_json_schema())
 
     def fix(node):
+        """Убираем служебные default/title у схем, но не трогаем словари properties и $defs:
+        там ключи это имена полей, и поле с именем title (название вакансии) удалять нельзя.
+        Баг до 14.11.2026: поле title пропадало из схемы, модель его не возвращала, разбор падал."""
         if isinstance(node, dict):
             node.pop("default", None)
-            node.pop("title", None)
+            if isinstance(node.get("title"), str):
+                node.pop("title")
             if node.get("type") == "object" and "properties" in node:
                 node["additionalProperties"] = False
                 node["required"] = list(node["properties"].keys())
-            for v in node.values():
-                fix(v)
+            for k, v in node.items():
+                if k in ("properties", "$defs") and isinstance(v, dict):
+                    for sub in v.values():
+                        fix(sub)
+                else:
+                    fix(v)
         elif isinstance(node, list):
             for v in node:
                 fix(v)

@@ -254,7 +254,7 @@ async def on_basic(message: Message, state: FSMContext):
         return
     await state.clear()
     await _send_profile(message, user.id)
-    await message.answer("Профиль сохранён. Следующий шаг: /search, найду вакансии.")
+    await message.answer("Профиль сохранён. Следующий шаг: пришлите вакансию, /new")
 
 
 @dp.message(F.text & ~F.text.startswith("/"))
@@ -349,7 +349,7 @@ async def profile_cmd(message: Message, state: FSMContext):
 
 # ---------- Поиск ----------
 
-@dp.message(Command("search"))
+@dp.message(Command("search"), F.func(lambda _: get_settings().search_enabled))
 async def search_cmd(message: Message, state: FSMContext):
     user = await get_user(message.from_user)
     if await need_consent(message, user):
@@ -376,7 +376,7 @@ async def search_cmd(message: Message, state: FSMContext):
     await vacancies_cmd(message)
 
 
-@dp.message(Command("vacancies"))
+@dp.message(Command("vacancies"), F.func(lambda _: get_settings().search_enabled))
 async def vacancies_cmd(message: Message):
     user = await get_user(message.from_user)
     async with SessionLocal() as s:
@@ -407,7 +407,7 @@ async def vacancies_cmd(message: Message):
                          disable_web_page_preview=True)
 
 
-@dp.message(Command("companies"))
+@dp.message(Command("companies"), F.func(lambda _: get_settings().search_enabled))
 async def companies_cmd(message: Message):
     user = await get_user(message.from_user)
     async with SessionLocal() as s:
@@ -434,9 +434,16 @@ async def companies_cmd(message: Message):
                          reply_markup=webapp_kb("companies", "Весь каталог"))
 
 
+@dp.message(Command("search", "vacancies", "companies"))
+async def search_off(message: Message):
+    """Поиск выключен (пивот 08.11): старые команды подсказывают новый сценарий."""
+    await message.answer("Поиск вакансий больше не работает: теперь я делаю резюме и письмо под вакансию, "
+                         "которую вы нашли сами. Начать: /start, новая вакансия: /new")
+
+
 # ---------- Пакет ----------
 
-@dp.callback_query(F.data.startswith("pkg:"))
+@dp.callback_query(F.data.startswith("pkg:"), F.func(lambda _: get_settings().search_enabled))
 async def on_package(cb: CallbackQuery):
     vacancy_id = int(cb.data.split(":")[1])
     await cb.answer()

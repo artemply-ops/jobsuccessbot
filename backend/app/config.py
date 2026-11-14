@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     superjob_app_id: str = ""  # без ключа коннектор SuperJob выключен
     http_user_agent: str = "JobPilotBot/0.1 (+https://jobpilot.example; contact: admin)"
 
+    # Поиск вакансий, скоринг и каталог компаний. Пивот 08.11: выключены, сервис делает только резюме.
+    # Код сохранён, включается SEARCH_ENABLED=true
+    search_enabled: bool = False
+
     # Скоринг
     prefilter_top_n: int = 50
     notify_threshold: int = 75

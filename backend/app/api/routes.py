@@ -114,6 +114,11 @@ async def put_contact(body: ContactIn, user: User = Depends(current_user),
     return {"ok": True}
 
 
+def _search_on() -> None:
+    """Поиск вакансий выключен (пивот 08.11): эти методы отвечают 404, код сохранён."""
+    if not get_settings().search_enabled:
+        raise HTTPException(404, "Поиск вакансий отключён: сервис делает резюме под вакансию")
+
 def _need_consent(user: User):
     if user.consent_at is None:
         raise HTTPException(403, "Нужно согласие на обработку персональных данных")
@@ -243,7 +248,7 @@ async def answers(body: TextIn, user: User = Depends(current_user), session: Asy
 
 # ---------- Поиск ----------
 
-@api.post("/search/run")
+@api.post("/search/run", dependencies=[Depends(_search_on)])
 async def run_search(user: User = Depends(current_user)):
     return {"job_id": await jobs.enqueue("search", user.id, jobs.search_job(user.id))}
 
@@ -270,7 +275,7 @@ def _vac(v: Vacancy, sc: VacancyScore | None) -> dict:
             "pros": sc.pros if sc else [], "gaps": sc.gaps if sc else [], "method": sc.method if sc else None}
 
 
-@api.get("/vacancies")
+@api.get("/vacancies", dependencies=[Depends(_search_on)])
 async def vacancies(min_score: int = 0, remote: bool | None = None, q: str | None = None, limit: int = 100,
                     user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     ver = await _version(session, user.id)
@@ -293,7 +298,7 @@ async def vacancies(min_score: int = 0, remote: bool | None = None, q: str | Non
     return [_vac(v, sc) for v, sc in rows]
 
 
-@api.get("/vacancies/{vacancy_id}")
+@api.get("/vacancies/{vacancy_id}", dependencies=[Depends(_search_on)])
 async def vacancy(vacancy_id: int, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     v = await session.get(Vacancy, vacancy_id)
     if v is None:
@@ -310,7 +315,7 @@ async def vacancy(vacancy_id: int, user: User = Depends(current_user), session: 
 
 # ---------- Компании ----------
 
-@api.get("/companies")
+@api.get("/companies", dependencies=[Depends(_search_on)])
 async def companies(segment: str | None = None, min_score: int = 0, user: User = Depends(current_user),
                     session: AsyncSession = Depends(get_session)):
     ver = await _version(session, user.id)
@@ -345,7 +350,7 @@ class CompanyIn(BaseModel):
     segment: str | None = None
 
 
-@api.post("/companies")
+@api.post("/companies", dependencies=[Depends(_search_on)])
 async def suggest_company(body: CompanyIn, user: User = Depends(current_user),
                           session: AsyncSession = Depends(get_session)):
     domain = body.domain.lower().split("//")[-1].split("/")[0].removeprefix("www.")
@@ -357,7 +362,7 @@ async def suggest_company(body: CompanyIn, user: User = Depends(current_user),
     return {"ok": True, "note": "Компания добавлена на модерацию"}
 
 
-@api.post("/companies/{company_id}/subscribe")
+@api.post("/companies/{company_id}/subscribe", dependencies=[Depends(_search_on)])
 async def subscribe(company_id: int, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     if await session.get(CompanySubscription, (user.id, company_id)) is None:
         session.add(CompanySubscription(user_id=user.id, company_id=company_id))
@@ -365,7 +370,7 @@ async def subscribe(company_id: int, user: User = Depends(current_user), session
     return {"ok": True}
 
 
-@api.delete("/companies/{company_id}/subscribe")
+@api.delete("/companies/{company_id}/subscribe", dependencies=[Depends(_search_on)])
 async def unsubscribe(company_id: int, user: User = Depends(current_user),
                       session: AsyncSession = Depends(get_session)):
     sub = await session.get(CompanySubscription, (user.id, company_id))
@@ -467,7 +472,7 @@ class PackageIn(BaseModel):
     instruction: str | None = None
 
 
-@api.post("/vacancies/{vacancy_id}/package")
+@api.post("/vacancies/{vacancy_id}/package", dependencies=[Depends(_search_on)])
 async def make_package(vacancy_id: int, body: PackageIn, user: User = Depends(current_user)):
     _need_consent(user)
     if not llm.available():

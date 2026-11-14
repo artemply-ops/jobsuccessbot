@@ -246,3 +246,17 @@ async def test_ocr_limits_pages(monkeypatch):
     monkeypatch.setattr(ocr, "recognize_page", fake)
     text, name = await ocr.recognize("cv.pdf", doc.tobytes())
     assert text == "стр 1\nстр 2\nстр 3\nстр 4" and name == "Анна Тестова"  # не больше MAX_PAGES
+
+
+def test_strict_schema_keeps_field_named_title():
+    """Регрессия 14.11: поле title (название вакансии) вычищалось вместе со служебными title, модель его не видела."""
+    from app.schemas import VacancyParsed
+    from app.services.llm import strict_schema
+    from app.services.sources.careers import _HtmlVacancies
+
+    s = strict_schema(VacancyParsed)
+    assert "title" in s["properties"] and "title" in s["required"] and "title" not in s
+    assert s["properties"]["title"]["type"] == "string" and "title" not in s["properties"]["title"]
+    h = strict_schema(_HtmlVacancies)
+    item = h["$defs"]["_HtmlVacancy"]
+    assert "title" in item["properties"] and "title" in item["required"]
