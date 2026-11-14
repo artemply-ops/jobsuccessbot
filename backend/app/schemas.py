@@ -137,6 +137,7 @@ class FactFlag(BaseModel):
     text: str = Field(description="утверждение из CV или письма")
     where: str = Field(description="cv | cover_letter | recruiter_message")
     reason: str = Field(description="почему не подтверждается профилем")
+    severity: str = Field("high", description="high: выдумано или преувеличено; low: допустимо, мелкая неточность")
 
 
 class FactCheck(BaseModel):

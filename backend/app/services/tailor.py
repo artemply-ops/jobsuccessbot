@@ -24,12 +24,15 @@ RULES = """ЖЁСТКИЕ ПРАВИЛА:
 - Только факты из профиля кандидата. Нельзя добавлять навыки, компании, роли, сроки, цифры, сертификаты,
   которых нет в профиле. Нельзя повышать уровень («участвовал» не превращать в «руководил»).
 - Можно переформулировать языком вакансии, переставлять акценты и опускать нерелевантное.
+- Не добавляй обстоятельства, которых нет в профиле: «с нуля», «впервые», «самостоятельно», «отвечал за план»,
+  «лично». Не утверждай, что опыт совпадает с требованием, если в профиле сказано обратное.
 - Маркер [CANDIDATE] это имя кандидата: имя не придумывай. Другие маркеры ([PERSON_1], [LINK_1]) не раскрывай.
 - Без штампов («командный игрок», «стрессоустойчивость», «мотивирован»), без лести компании.
 - Язык ответа: язык вакансии."""
 
 SYSTEM_CV = f"""Ты сильный карьерный консультант и редактор. Делаешь резюме под конкретную вакансию.
-- headline: целевая роль под вакансию, но только если она соответствует опыту кандидата.
+- headline: роль, которую кандидат реально занимал или занимает (можно уточнить языком вакансии). Должность
+  выше фактической не ставь: руководитель отдела продаж не становится коммерческим директором.
 - summary: 2-3 предложения, почему кандидат подходит именно на эту роль, с опорой на факты.
 - highlights: до 8 самых сильных измеримых результатов из профиля под эту вакансию. value это число
   ровно в том виде, как оно есть в профиле («180 тыс.», «+27%», «14»), label 2-5 слов. Нет цифр в профиле:
@@ -47,7 +50,41 @@ SYSTEM_LETTER = f"""Ты сильный карьерный консультан�
 {RULES}"""
 
 SYSTEM_FACTCHECK = package.SYSTEM_FACTCHECK + """
-Показатели (highlights) проверяй особенно строго: число должно быть в профиле. Для них where = "cv"."""
+Показатели (highlights) проверяй особенно строго: число должно быть в профиле. Для них where = "cv".
+Заголовок (headline) и навыки (skills) тоже проверяй: должность выше фактической и навык, которого нет в профиле
+ни как навыка, ни как подтверждённого опытом действия, это high.
+severity: high, если утверждение выдумано, преувеличено или искажает факт; low, если оно по сути верно и
+придраться можно только к формулировке. Если сомневаешься и сам пишешь «допустимо», это low."""
+
+SYSTEM_LETTER_FIX = f"""Ты редактор. В сопроводительном письме проверка нашла утверждения, которые не подтверждаются профилем.
+Перепиши только эти места: убери или замени формулировкой, которая строго следует профилю. Остальной текст,
+стиль и длину сохрани. Верни письмо целиком.
+{RULES}"""
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"\W+", " ", (s or "").lower()).strip()
+
+
+def apply_cv_flags(cv: CV, flags: list, fallback_headline: str) -> CV:
+    """Неподтверждённые заголовок и навыки не попадают в файл: заголовок берём из профиля, навык убираем.
+    Пункты опыта и показатели вычищает export.tailored_view по тем же флагам."""
+    bad = {_norm(f.text) for f in flags if f.where == "cv"}
+    if not bad:
+        return cv
+    head = _norm(cv.headline)
+    if head in bad or any(len(b) > 12 and (b in head or head in b) for b in bad):
+        cv.headline = fallback_headline or (cv.experience[0].role if cv.experience else "")
+    cv.skills = [s for s in cv.skills if _norm(s) not in bad]
+    return cv
+
+
+async def _check(profile_text: str, cv: CV | None, letter: str) -> list:
+    res = await llm.structured(
+        schema=FactCheck, system=SYSTEM_FACTCHECK, effort="medium", max_tokens=4000,
+        user=f"ПРОФИЛЬ:\n{profile_text}\n\nТЕКСТЫ ДЛЯ ПРОВЕРКИ:\n"
+             f"{json.dumps({'cv': cv.model_dump() if cv else None, 'cover_letter': letter}, ensure_ascii=False)}")
+    return [f for f in res.flags if f.severity != "low"]  # low: формулировка, а не выдумка; пользователя не дёргаем
 
 
 class PackageError(ValueError):
@@ -122,15 +159,23 @@ async def build(session: AsyncSession, user: User, target: Target, items: list[s
 
     cv = verified_highlights(draft.cv, profile_text) if need_cv else None
     letter = getattr(draft, "cover_letter", "") or ""
-    check = await llm.structured(
-        schema=FactCheck, system=SYSTEM_FACTCHECK, effort="medium", max_tokens=4000,
-        user=f"ПРОФИЛЬ:\n{profile_text}\n\nТЕКСТЫ ДЛЯ ПРОВЕРКИ:\n"
-             f"{json.dumps({'cv': cv.model_dump() if cv else None, 'cover_letter': letter}, ensure_ascii=False)}")
+    flags = await _check(profile_text, cv, letter)
+    letter_flags = [f for f in flags if f.where != "cv"]
+    if letter and letter_flags:  # одна попытка исправить письмо самим, чтобы пользователь получил чистый текст
+        fixed = await llm.structured(
+            schema=TailoredLetter, system=SYSTEM_LETTER_FIX, effort="medium", max_tokens=4000,
+            user=f"ПРОФИЛЬ:\n{profile_text}\n\nПИСЬМО:\n{letter}\n\nНЕ ПОДТВЕРЖДАЕТСЯ:\n"
+                 + "\n".join(f"- {f.text}: {f.reason}" for f in letter_flags))
+        letter = fixed.cover_letter
+        flags = [f for f in flags if f.where == "cv"] + [f for f in await _check(profile_text, None, letter)
+                                                         if f.where != "cv"]
+    if cv:
+        cv = apply_cv_flags(cv, flags, prof.data.get("headline") or "")
 
     pkg = Package(user_id=user.id, vacancy_id=vacancy.id, target_id=target.id,
                   version=(prev.version + 1) if prev else 1, items=items, scheme=scheme,
                   cv=cv.model_dump() if cv else {"headline": prof.data.get("headline") or ""}, cover_letter=letter, recruiter_message="",
-                  fact_flags=[f.model_dump() for f in check.flags], instruction=instruction)
+                  fact_flags=[f.model_dump() for f in flags], instruction=instruction)
     session.add(pkg)
     await session.flush()
     return pkg

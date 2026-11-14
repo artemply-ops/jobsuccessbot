@@ -39,17 +39,27 @@ class Vault:
         return token
 
 
+NAME_ENDINGS = ("", "а", "у", "е", "ы", "и", "я", "ю", "ь", "й", "ой", "ою", "ом", "ым", "им", "ем", "ей", "ая",
+                "ую", "ого", "ому")
+_NAME_TAIL = re.compile(r"(ая|ий|ый|ой|а|я|ь|й)$", re.IGNORECASE)
+
+
 def _name_patterns(full_name: str | None) -> list[re.Pattern]:
-    """Паттерны для частей ФИО с учётом русских падежных окончаний."""
+    """Части ФИО во всех падежах: база слова + падежное окончание из закрытого списка.
+
+    База: Тестова -> Тестов, Тестовая -> Тестов, Ольга -> Ольг, Андрей -> Андре. Окончания только падежные,
+    поэтому «Тестова» ловит «Тестовой», «Тестову», но не «Тестовый»; «Белова» не задевает «Белорусский».
+    """
     if not full_name:
         return []
     pats = []
+    ends = "|".join(sorted(NAME_ENDINGS, key=len, reverse=True))
     for part in full_name.split():
         part = part.strip(".,")
         if len(part) < 3:
             continue
-        stem = part[:-2] if len(part) > 5 else part[:-1] if len(part) > 3 else part
-        pats.append(re.compile(rf"\b{re.escape(stem)}[а-яёa-z]{{0,4}}\b", re.IGNORECASE))
+        base = _NAME_TAIL.sub("", part) if len(part) > 3 else part
+        pats.append(re.compile(rf"\b{re.escape(base)}(?:{ends})\b", re.IGNORECASE))
     return pats
 
 
