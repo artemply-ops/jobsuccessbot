@@ -8,6 +8,7 @@
 """
 
 import json
+import logging
 import re
 
 from sqlalchemy import select
@@ -18,6 +19,8 @@ from app.schemas import CV, PACKAGE_ITEMS, FactCheck, TailoredBoth, TailoredCV, 
 from app.services import llm, package
 from app.services.cv_render import SCHEMES
 from app.services.profile import latest_profile, profile_to_text
+
+log = logging.getLogger(__name__)
 
 
 RULES = """ЖЁСТКИЕ ПРАВИЛА:
@@ -120,8 +123,21 @@ async def _prev(session: AsyncSession, user_id: int, target_id: int) -> Package 
     return (await session.execute(q)).scalar_one_or_none()
 
 
+AUTO = "[покрытие] "  # префикс автоматической перегенерации по пробелам: не тратит пользовательскую правку
+MAX_IMPROVE = 2  # перегенераций по покрытию на одну вакансию
+
+
+async def revisions(session: AsyncSession, user_id: int, target_id: int) -> tuple[bool, int]:
+    """(использована ли ручная правка, сколько перегенераций по покрытию осталось)."""
+    rows = (await session.execute(select(Package.instruction).where(Package.user_id == user_id,
+                                                                    Package.target_id == target_id))).scalars().all()
+    manual = any(i and not i.startswith(AUTO) for i in rows)
+    auto = sum(1 for i in rows if i and i.startswith(AUTO))
+    return manual, max(0, MAX_IMPROVE - auto)
+
+
 async def build(session: AsyncSession, user: User, target: Target, items: list[str], scheme: str = "graphite",
-                instruction: str | None = None) -> Package:
+                instruction: str | None = None, auto: bool = False) -> Package:
     items = normalize_items(items)
     if scheme not in SCHEMES:
         raise PackageError("Неизвестная цветовая схема")
@@ -133,8 +149,11 @@ async def build(session: AsyncSession, user: User, target: Target, items: list[s
     prev = await _prev(session, user.id, target.id)
     if instruction and prev is None:
         raise PackageError("Правка возможна после первой версии пакета.")
-    if instruction and prev.instruction:  # последняя версия уже была правкой
+    manual_used, improve_left = await revisions(session, user.id, target.id)
+    if instruction and not auto and manual_used:
         raise PackageError("Правка уже использована. Можно поменять цветовую схему или собрать пакет заново.")
+    if auto and improve_left <= 0:
+        raise PackageError("Перегенерация по покрытию уже использована дважды для этой вакансии.")
 
     vacancy = await session.get(Vacancy, target.vacancy_id)
     dossier = await package.get_dossier(session, vacancy, domain=target.company_domain)
@@ -175,7 +194,15 @@ async def build(session: AsyncSession, user: User, target: Target, items: list[s
     pkg = Package(user_id=user.id, vacancy_id=vacancy.id, target_id=target.id,
                   version=(prev.version + 1) if prev else 1, items=items, scheme=scheme,
                   cv=cv.model_dump() if cv else {"headline": prof.data.get("headline") or ""}, cover_letter=letter, recruiter_message="",
-                  fact_flags=[f.model_dump() for f in flags], instruction=instruction)
+                  fact_flags=[f.model_dump() for f in flags],
+                  instruction=(AUTO + instruction) if auto and instruction else instruction)
+    if cv:  # проверка после генерации: сколько требований и ключевых слов попало в резюме
+        try:
+            from app.services import coverage
+
+            pkg.coverage = await coverage.assess(coverage.cv_text(cv.model_dump()), profile_text, target.parsed)
+        except llm.LLMError as e:
+            log.warning("coverage after: target=%s %s", target.id, e)
     session.add(pkg)
     await session.flush()
     return pkg

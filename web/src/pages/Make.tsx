@@ -7,11 +7,17 @@ type Source = { id: number; kind: string; filename: string | null; status: strin
 type Question = { field: string; question: string };
 type Target = {
   id: number; title: string; company: string; company_domain: string | null;
-  parsed: { requirements?: string[] }; questions: Question[];
+  parsed: { requirements?: string[] }; questions: Question[]; coverage?: Cov | null;
 };
 type Scheme = { key: string; title: string; head: string; highlight: string; signal: string };
 type Flag = { text: string; where: string; reason: string };
-type Pkg = { id: number; version: number; items: string[]; scheme: string; flags: Flag[]; revision_left: boolean };
+type Req = { requirement: string; status: "covered" | "partial" | "missing"; evidence: string; in_profile: boolean; question: string };
+type Cov = { requirements: Req[]; req_covered: number; req_partial: number; req_total: number;
+  keywords_covered: string[]; keywords_missing: string[]; kw_total: number; score: number };
+type Pkg = { id: number; version: number; items: string[]; scheme: string; flags: Flag[]; revision_left: boolean;
+  improve_left: number; coverage: Cov | null; coverage_before: Cov | null };
+type ReviewRes = { score: number; checks: { key: string; title: string; ok: boolean; note: string }[];
+  advice: { problem: string; fix: string }[] };
 
 const ITEMS: [string, string][] = [
   ["cv", "Резюме"],
@@ -242,6 +248,7 @@ function Materials({ onNext, disabled }: { onNext: () => void; disabled: boolean
         </ul>
       )}
       {ok.length > 0 && <NameField key={nameKey} />}
+      {ok.length > 0 && <ReviewBox />}
       <button className="btn" disabled={!ok.length || disabled} onClick={onNext}>Дальше</button>
     </div>
   );
@@ -311,6 +318,10 @@ function Answers({ target, onSubmit, onSkip, disabled }: { target: Target; onSub
     <div className="card stack">
       <h2>Несколько уточнений</h2>
       <p className="muted small">{target.title} · {target.company}</p>
+      {target.coverage && target.coverage.req_total > 0 && (
+        <div className="banner">📊 Ваше резюме сейчас закрывает <b>{target.coverage.req_covered} из {target.coverage.req_total}</b> требований
+          вакансии. После генерации покажу, сколько стало.</div>
+      )}
       <ol>{target.questions.map((q) => <li key={q.field + q.question}>{q.question}</li>)}</ol>
       <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder="Ответьте своими словами, можно коротко" />
       <div className="row gap">
@@ -526,6 +537,18 @@ function Result(props: {
         </div>
       </div>
 
+      {pkg.coverage && (
+        <CoverageCard cov={pkg.coverage} before={pkg.coverage_before} left={pkg.improve_left} busy={!!busy}
+          onImprove={(facts) => run((facts ? ["Добавляю ваши факты в профиль"] : []).concat(
+            ["Закрываю пробелы", "Проверяю каждый факт", "Считаю покрытие", "Собираю PDF"]), async () => {
+            const r = await api<{ job_id?: number; stub?: boolean; message?: string }>(`/packages/${pkg.id}/improve`, {
+              method: "POST", json: { facts: facts || null } });
+            if (r.stub) throw new Error(r.message || "ИИ не подключён");
+            const j = await waitJob(r.job_id!);
+            setPackageId(j.result.package_id);
+          })} />
+      )}
+
       {pkg.revision_left && (
         <div className="card stack">
           <h2>Одна правка</h2>
@@ -535,6 +558,85 @@ function Result(props: {
         </div>
       )}
       <button className="btn secondary" onClick={onNew}>Новая вакансия</button>
+    </div>
+  );
+}
+
+// Покрытие требований вакансии: сколько закрыто, было/стало, что не покрыто и почему + перегенерация
+function CoverageCard({ cov, before, left, busy, onImprove }: {
+  cov: Cov; before: Cov | null; left: number; busy: boolean; onImprove: (facts: string) => void;
+}) {
+  const [facts, setFacts] = useState("");
+  const gaps = cov.requirements.filter((r) => r.status !== "covered");
+  const askFacts = gaps.filter((r) => !r.in_profile);
+  const pct = cov.req_total ? Math.round(100 * (cov.req_covered + cov.req_partial / 2) / cov.req_total) : cov.score;
+  return (
+    <div className="card stack">
+      <h2>Покрытие требований вакансии</h2>
+      {cov.req_total > 0 && (
+        <div className="cov-head">
+          <b className="cov-num">{cov.req_covered} из {cov.req_total}</b>
+          <span className="muted small">
+            {cov.req_partial ? `частично ещё ${cov.req_partial}` : ""}
+            {before && before.req_total ? ` · в исходном резюме было ${before.req_covered} из ${before.req_total}` : ""}
+          </span>
+        </div>
+      )}
+      {cov.req_total > 0 && <div className="cov-bar"><span style={{ width: `${pct}%` }} /></div>}
+      {cov.kw_total > 0 && <p className="muted small">Ключевые слова вакансии: {cov.keywords_covered.length} из {cov.kw_total}        {cov.keywords_missing.length ? ` · не встретились: ${cov.keywords_missing.slice(0, 8).join(", ")}` : ""}</p>}
+      {gaps.length > 0 ? (
+        <ul className="cov-list">
+          {gaps.map((r) => (
+            <li key={r.requirement} className={r.status}>
+              <span>{r.status === "partial" ? "◐" : "○"} {r.requirement}</span>
+              <span className="muted small">{r.in_profile
+                ? "есть в вашем профиле, но в резюме отражено слабо: перегенерация поможет"
+                : `в профиле этого нет${r.question ? `. ${r.question}` : ""}`}</span>
+            </li>
+          ))}
+        </ul>
+      ) : cov.req_total > 0 ? <p className="small">Все требования подтверждены фактами из вашего профиля.</p> : null}
+      {askFacts.length > 0 && left > 0 && (
+        <textarea rows={3} value={facts} onChange={(e) => setFacts(e.target.value)}
+          placeholder="Если такой опыт есть, расскажите своими словами. Только правду: каждый факт проверю и добавлю в профиль" />
+      )}
+      {left > 0 ? (
+        <button className="btn" disabled={busy} onClick={() => onImprove(facts.trim())}>
+          {facts.trim() ? "Добавить факты и перегенерировать" : "Перегенерировать с учётом пробелов"}
+        </button>
+      ) : <p className="muted small">Перегенерация по покрытию для этой вакансии уже использована.</p>}
+      <p className="muted small">Выдумывать не буду: только точнее подам ваш опыт. Это не тратит вашу правку, осталось {left}.</p>
+    </div>
+  );
+}
+
+// Проверка резюме без вакансии: оценка и конкретные правки
+function ReviewBox() {
+  const [res, setRes] = useState<ReviewRes | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const go = async () => {
+    setLoading(true); setErr("");
+    try { setRes(await api<ReviewRes>("/review", { method: "POST" })); }
+    catch (e: any) { setErr(e.message); }
+    finally { setLoading(false); }
+  };
+  return (
+    <div className="stack small-gap">
+      {!res && !loading && <button className="btn secondary" onClick={go}>Проверить резюме без вакансии</button>}
+      {loading && <Working stages={["Читаю резюме", "Проверяю цифры, даты и структуру", "Готовлю советы"]} />}
+      {err && <p className="error">{err}</p>}
+      {res && (
+        <div className="review">
+          <b>Оценка резюме: {res.score} из 100</b>
+          <ul className="cov-list">
+            {res.checks.map((c) => <li key={c.key} className={c.ok ? "covered" : "missing"}><span>{c.ok ? "✓" : "!"} {c.title}</span>
+              <span className="muted small">{c.note}</span></li>)}
+          </ul>
+          {res.advice.length > 0 && <><b>Что поправить</b><ol>{res.advice.map((a) => (
+            <li key={a.problem}>{a.problem}<div className="muted small">→ {a.fix}</div></li>))}</ol></>}
+        </div>
+      )}
     </div>
   );
 }

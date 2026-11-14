@@ -53,10 +53,21 @@ dist = get_settings().web_dist
 if dist.exists():
     app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
 
+    # index.html, service worker и манифест всегда перепроверяются: без этого окно Telegram и установленная PWA
+    # держали старую сборку после выкатки (14.11.2026). Файлы в /assets с хэшем в имени кэшируются навсегда.
+    NO_CACHE = {"Cache-Control": "no-cache, must-revalidate"}
+
+    @app.middleware("http")
+    async def immutable_assets(request: Request, call_next):
+        resp = await call_next(request)
+        if request.url.path.startswith("/assets/") and resp.status_code == 200:
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return resp
+
     @app.get("/{path:path}")
     async def spa(path: str):
         """PWA: статика и SPA-фолбэк на index.html."""
         f = (dist / path).resolve()
         if path and f.is_file() and dist.resolve() in f.parents:
-            return FileResponse(f)
-        return FileResponse(dist / "index.html")
+            return FileResponse(f, headers=NO_CACHE if f.suffix in (".js", ".webmanifest", ".html") else None)
+        return FileResponse(dist / "index.html", headers=NO_CACHE)

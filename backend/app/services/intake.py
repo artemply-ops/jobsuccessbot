@@ -266,6 +266,13 @@ async def clarify(session: AsyncSession, user: User, target: Target) -> list[dic
     res = await llm.structured(schema=ClarifyQuestions, system=SYSTEM_CLARIFY, effort="medium", max_tokens=3000,
                                user=f"ПРОФИЛЬ КАНДИДАТА:\n{profile.profile_to_text(prof.data)}\n\nВАКАНСИЯ:\n{vac}")
     target.questions = [q.model_dump() for q in res.questions[:3]]
+    try:  # «своё резюме против вакансии»: сколько требований закрывает профиль до генерации
+        from app.services import coverage
+
+        prof_text = profile.profile_to_text(prof.data)
+        target.coverage = await coverage.assess(prof_text, prof_text, target.parsed)
+    except llm.LLMError as e:
+        log.warning("coverage before: target=%s %s", target.id, e)
     await session.flush()
     return target.questions
 
@@ -288,5 +295,6 @@ def view(target: Target, vacancy: Vacancy, dossier_data: dict | None = None) -> 
     return {"id": target.id, "vacancy_id": vacancy.id, "title": vacancy.title, "company": vacancy.company_name,
             "source_url": target.source_url, "company_domain": target.company_domain, "parsed": target.parsed,
             "questions": target.questions, "answered": target.answered, "dossier": dossier_data,
+            "coverage": target.coverage,
             "ai": llm.available(), "created_at": target.created_at}
 

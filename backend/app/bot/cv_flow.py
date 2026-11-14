@@ -18,7 +18,7 @@ from aiogram.types import (BufferedInputFile, CallbackQuery, InlineKeyboardButto
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.jobs import build_profile_job, tailor_job
+from app.jobs import build_profile_job, improve_job, tailor_job
 from app.models import Contact, Package, Target, User, Vacancy
 from app.schemas import PACKAGE_ITEMS
 from app.services import cv_render, export, intake, llm, profile
@@ -40,6 +40,7 @@ class CV(StatesGroup):
     photo = State()
     revise = State()
     name = State()
+    facts = State()
 
 
 def is_url(text: str) -> bool:
@@ -364,9 +365,15 @@ async def ask_questions(message: Message, state: FSMContext):
                 t = await s.get(Target, data["target_id"])
                 qs = await intake.clarify(s, u, t)
                 await s.commit()
+                before = t.coverage
     except Exception as e:
         await _error(message, e, "clarify")
-        qs = []
+        qs, before = [], None
+    if before and before.get("req_total"):  # «своё резюме против вакансии» до генерации
+        miss = [r["requirement"] for r in before["requirements"] if r["status"] == "missing"]
+        await message.answer(f"📊 Ваше резюме сейчас закрывает <b>{before['req_covered']} из {before['req_total']}</b> "
+                             "требований вакансии." + ("\nНе видно: " + html.escape("; ".join(miss[:4])) if miss else "")
+                             + "\nПосле генерации покажу, сколько стало.")
     if not qs:
         await ask_items(message, state)
         return
@@ -541,11 +548,127 @@ async def send_files(message: Message, package_id: int, accept_flags: bool = Fal
             f"• {html.escape(f['text'])} — {html.escape(f['reason'])}" for f in letter_flags)
             + "\n\nЕсли это правда, подтвердите, и я пришлю письмо. Если нет, внесите правку.")
         kb.append([InlineKeyboardButton(text="Это правда, прислать письмо", callback_data=f"cva:{pkg.id}")])
-    if not pkg.instruction:
+    from app.services.tailor import revisions
+
+    async with SessionLocal() as s:
+        target = await s.get(Target, pkg.target_id) if pkg.target_id else None
+        manual_used, improve_left = await revisions(s, pkg.user_id, pkg.target_id) if pkg.target_id else (True, 0)
+    if pkg.coverage:  # проверка после генерации и предложение перегенерировать
+        await message.answer(coverage_text(pkg.coverage, target.coverage if target else None))
+        if improve_left > 0:
+            kb.append([InlineKeyboardButton(text="🔁 Перегенерировать с учётом пробелов", callback_data=f"cvi2:{pkg.id}")])
+            if any(r["status"] != "covered" and not r["in_profile"] for r in pkg.coverage.get("requirements", [])):
+                kb.append([InlineKeyboardButton(text="✍️ Добавить факты и перегенерировать", callback_data=f"cvf:{pkg.id}")])
+    if not manual_used:
         kb.append([InlineKeyboardButton(text="✏️ Внести правку (одна)", callback_data=f"cvr:{pkg.id}")])
     kb.append([InlineKeyboardButton(text="🎨 Другая цветовая схема", callback_data=f"cvc:{pkg.id}")])
     kb.append([InlineKeyboardButton(text="Новая вакансия", callback_data="cv:new")])
     await message.answer("Готово. Что дальше?", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+
+def coverage_text(cov: dict, before: dict | None) -> str:
+    """Отчёт о покрытии: сколько требований закрыто, было/стало, что не покрыто и почему."""
+    total = cov.get("req_total") or 0
+    lines = []
+    if total:
+        was = (f" (в исходном резюме было {before['req_covered']} из {before['req_total']})"
+               if before and before.get("req_total") else "")
+        part = f", частично ещё {cov['req_partial']}" if cov.get("req_partial") else ""
+        lines.append(f"📊 <b>Покрытие требований: {cov['req_covered']} из {total}</b>{part}{was}")
+    if cov.get("kw_total"):
+        lines.append(f"Ключевые слова вакансии: {len(cov['keywords_covered'])} из {cov['kw_total']}")
+    gaps = [r for r in cov.get("requirements", []) if r["status"] != "covered"]
+    if gaps:
+        lines.append("\n<b>Не покрыто или покрыто частично:</b>")
+        for r in gaps[:6]:
+            why = ("есть в вашем профиле, но в резюме отражено слабо: можно перегенерировать" if r["in_profile"]
+                   else "в вашем профиле этого нет" + (f". {r['question']}" if r.get("question") else ""))
+            mark = "◐" if r["status"] == "partial" else "○"
+            lines.append(f"{mark} {html.escape(r['requirement'])} — <i>{html.escape(why)}</i>")
+    elif total:
+        lines.append("Все требования вакансии подтверждены фактами из профиля.")
+    if cov.get("keywords_missing"):
+        lines.append("\nНе встретились слова: " + html.escape(", ".join(cov["keywords_missing"][:8])))
+    lines.append("\nМожно перегенерировать: выдумывать не буду, только точнее подам ваш опыт.")
+    return "\n".join(lines)
+
+
+@router.callback_query(F.data.startswith("cvi2:"))
+async def on_improve(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    pkg = await _own(cb, int(cb.data.split(":")[1]))
+    if pkg:
+        await run_improve(cb.message, state, cb.from_user, pkg.id, None)
+
+
+@router.callback_query(F.data.startswith("cvf:"))
+async def on_facts(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    pkg = await _own(cb, int(cb.data.split(":")[1]))
+    if not pkg:
+        return
+    gaps = [r for r in (pkg.coverage or {}).get("requirements", []) if r["status"] != "covered" and not r["in_profile"]]
+    await state.update_data(package_id=pkg.id)
+    await state.set_state(CV.facts)
+    await cb.message.answer("Расскажите, какой опыт у вас есть по этим требованиям. Только правду: я проверю каждый "
+                            "факт и добавлю в профиль.\n\n" + "\n".join(
+                                f"• {html.escape(r['question'] or r['requirement'])}" for r in gaps[:6]))
+
+
+async def take_facts(message: Message, state: FSMContext, text: str):
+    data = await state.get_data()
+    await run_improve(message, state, message.from_user, data["package_id"], text)
+
+
+async def run_improve(message: Message, state: FSMContext, tg_user, package_id: int, facts: str | None):
+    if not llm.available():
+        await message.answer("🤖 <i>Перегенерация работает на ИИ, а ИИ пока не подключён.</i>")
+        return
+    user = await _user(tg_user)
+    stages = (["Добавляю ваши факты в профиль"] if facts else []) + ["Закрываю пробелы", "Проверяю каждый факт",
+                                                                     "Считаю покрытие", "Собираю PDF"]
+    try:
+        async with working(message, stages, every=4.0):
+            res = await _run(improve_job(user.id, package_id, facts))
+    except Exception as e:
+        await _error(message, e, "improve")
+        return
+    await state.update_data(package_id=res["package_id"])
+    await state.set_state(None)
+    await send_files(message, res["package_id"])
+
+
+@router.message(Command("check"))
+async def check_resume(message: Message):
+    """Проверка резюме без вакансии: оценка и конкретные правки."""
+    from sqlalchemy import select
+
+    from app.models import Source
+    from app.services import review
+
+    user = await _user(message.from_user)
+    async with SessionLocal() as s:
+        rows = (await s.execute(select(Source).where(Source.user_id == user.id, Source.status == "parsed")
+                                .order_by(Source.id.desc()))).scalars().all()
+        c = await s.get(Contact, user.id)
+    files = [x for x in rows if x.kind == "file"]
+    text = files[0].text if files else "\n\n".join(x.text or "" for x in rows)
+    if not (text or "").strip():
+        await message.answer("Сначала пришлите резюме файлом, сканом или фото, потом /check.")
+        return
+    try:
+        async with working(message, ["Читаю резюме", "Проверяю цифры, даты и структуру", "Готовлю советы"]):
+            r = await review.review(text, c.full_name if c else None)
+    except Exception as e:
+        await _error(message, e, "review")
+        return
+    lines = [f"📝 <b>Оценка резюме: {r['score']} из 100</b>"]
+    lines += [f"{'✅' if x['ok'] else '⚠️'} {html.escape(x['title'])}: {html.escape(x['note'])}" for x in r["checks"]]
+    if r["advice"]:
+        lines.append("\n<b>Что поправить:</b>")
+        lines += [f"{i}. {html.escape(a['problem'])}\n   → {html.escape(a['fix'])}" for i, a in enumerate(r["advice"], 1)]
+    lines.append("\nЧтобы сделать резюме под конкретную вакансию: /new")
+    await message.answer("\n".join(lines))
 
 
 async def _own(cb: CallbackQuery, package_id: int) -> Package | None:
@@ -630,6 +753,8 @@ async def handle_text(message: Message, state: FSMContext, text: str, kind: str 
         await take_revision(message, state, text)
     elif st == CV.name.state:
         await take_name(message, state, text)
+    elif st == CV.facts.state:
+        await take_facts(message, state, text)
     elif st in (CV.items.state, CV.scheme.state, CV.photo.state):
         await message.answer("Выберите вариант кнопками выше.")
     else:

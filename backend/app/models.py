@@ -163,6 +163,7 @@ class Target(Base):
     parsed: Mapped[dict] = mapped_column(JSON, default=dict)  # schemas.VacancyParsed
     questions: Mapped[list] = mapped_column(JSON, default=list)
     answered: Mapped[bool] = mapped_column(Boolean, default=False)
+    coverage: Mapped[dict | None] = mapped_column(JSON)  # покрытие требований исходным профилем (services/coverage)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -181,6 +182,7 @@ class Package(Base):
     target_id: Mapped[int | None] = mapped_column(ForeignKey("targets.id"), index=True)
     items: Mapped[list | None] = mapped_column(JSON)  # подмножество schemas.PACKAGE_ITEMS
     scheme: Mapped[str | None] = mapped_column(String(32))  # cv_render.SCHEMES
+    coverage: Mapped[dict | None] = mapped_column(JSON)  # покрытие требований готовым резюме (services/coverage)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 

@@ -445,6 +445,45 @@ class TailorIn(BaseModel):
     instruction: str | None = None  # одна итерация правок
 
 
+class ImproveIn(BaseModel):
+    facts: str | None = None  # недостающий опыт своими словами: попадёт в профиль и будет проверен фактчеком
+
+
+@api.post("/packages/{package_id}/improve")
+async def improve_package(package_id: int, body: ImproveIn, user: User = Depends(current_user),
+                          session: AsyncSession = Depends(get_session)):
+    """Перегенерировать с учётом пробелов покрытия. Не тратит ручную правку, до 2 раз на вакансию."""
+    _need_consent(user)
+    pkg = await _own_package(session, package_id, user)
+    if not pkg.target_id:
+        raise HTTPException(400, "Этот пакет собран по старой схеме")
+    if not llm.available():
+        return {"stub": True, "message": str(llm.AINotConnected("Перегенерация"))}
+    _, left = await tailor.revisions(session, user.id, pkg.target_id)
+    if left <= 0:
+        raise HTTPException(400, "Перегенерация по покрытию уже использована дважды для этой вакансии")
+    return {"job_id": await jobs.enqueue("improve", user.id, jobs.improve_job(user.id, pkg.id, body.facts))}
+
+
+@api.post("/review")
+async def review_resume(user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Проверка резюме без вакансии: оценка и правки. Берём последний загруженный файл, иначе все тексты о себе."""
+    from app.services import review
+
+    _need_consent(user)
+    rows = (await session.execute(select(Source).where(Source.user_id == user.id, Source.status == "parsed")
+                                  .order_by(Source.id.desc()))).scalars().all()
+    files = [s for s in rows if s.kind == "file"]
+    text = files[0].text if files else "\n\n".join(s.text or "" for s in rows)
+    if not (text or "").strip():
+        raise HTTPException(400, "Сначала загрузите резюме")
+    contact = await session.get(Contact, user.id)
+    try:
+        return await review.review(text, contact.full_name if contact else None)
+    except llm.LLMError as e:
+        raise HTTPException(502, str(e))
+
+
 @api.post("/targets/{target_id}/package")
 async def target_package(target_id: int, body: TailorIn, user: User = Depends(current_user),
                          session: AsyncSession = Depends(get_session)):
@@ -505,9 +544,12 @@ async def get_package(package_id: int, user: User = Depends(current_user),
     contact = await session.get(Contact, user.id)
     if pkg.items:  # пакет этапа 3: выбранные документы и шаблон
         view = export.tailored_view(pkg, contact, drop_flagged=False)
+        manual_used, improve_left = await tailor.revisions(session, user.id, pkg.target_id)
+        target = await session.get(Target, pkg.target_id) if pkg.target_id else None
         return {"id": pkg.id, "target_id": pkg.target_id, "version": pkg.version, "items": pkg.items,
                 "scheme": pkg.scheme, "flags": pkg.fact_flags, "instruction": pkg.instruction,
-                "revision_left": not pkg.instruction, **view}
+                "revision_left": not manual_used, "improve_left": improve_left, "coverage": pkg.coverage,
+                "coverage_before": target.coverage if target else None, **view}
     view = export.cv_view(pkg, contact, drop_flagged=False)
     return {"id": pkg.id, "vacancy_id": pkg.vacancy_id, "version": pkg.version, "flags": pkg.fact_flags,
             "instruction": pkg.instruction, **view}

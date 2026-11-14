@@ -110,6 +110,25 @@ def tailor_job(user_id: int, target_id: int, items: list[str], scheme: str, inst
     return fn
 
 
+def improve_job(user_id: int, package_id: int, facts: str | None) -> JobFn:
+    """Перегенерация по пробелам покрытия: новые факты (если есть) в профиль, затем пакет с указанием закрыть пробелы."""
+    async def fn(s: AsyncSession) -> dict:
+        from app.models import Package, Target, User
+        from app.services import coverage, intake, tailor
+
+        user = await s.get(User, user_id)
+        prev = await s.get(Package, package_id)
+        target = await s.get(Target, prev.target_id)
+        if facts and facts.strip():
+            await intake.answer(s, user, target, facts)  # факты кандидата: источник профиля + обновление профиля
+        instr = coverage.improve_instruction(prev.coverage or {})
+        if facts and facts.strip():
+            instr += "\nКандидат добавил факты (они уже в профиле), используй их, если они закрывают требования."
+        pkg = await tailor.build(s, user, target, prev.items or ["cv"], prev.scheme or "graphite", instr, auto=True)
+        return {"package_id": pkg.id, "version": pkg.version, "items": pkg.items, "flags": len(pkg.fact_flags)}
+    return fn
+
+
 async def daily_refresh() -> dict:
     """Ежедневно: проверка каталога, сбор с карьерных страниц, пересчёт для всех пользователей с профилем."""
     from app.config import get_settings

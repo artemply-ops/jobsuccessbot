@@ -21,6 +21,9 @@ export default defineConfig({
       },
       workbox: {
         navigateFallbackDenylist: [/^\/api/, /^\/health/],
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         runtimeCaching: [],
       },
     }),
