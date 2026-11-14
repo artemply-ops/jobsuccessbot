@@ -303,7 +303,11 @@ async def add_general_target(session: AsyncSession, user: User, role: str | None
     ссылается на vacancy_id; в генерацию она не попадает. Каждый запуск отдельной целью: своя правка и версии."""
     import uuid
 
-    role = (role or "").strip()[:200]
+    from app.models import Contact
+
+    # Должность пишет сам пользователь и она уходит в промпт: обезличиваем как любой его текст (имя, контакты)
+    contact = await session.get(Contact, user.id)
+    role = depersonalize((role or "").strip()[:200], contact.full_name if contact else None, Vault()).strip()
     prof = await profile.latest_profile(session, user.id)
     title = role or ((prof.data.get("headline") if prof else "") or "Резюме")
     vacancy = Vacancy(fingerprint=f"general:{user.id}:{uuid.uuid4().hex[:12]}", company_name="", title=title,

@@ -151,6 +151,8 @@ async def test_general_cv_without_vacancy(session, monkeypatch):
     target = await intake.add_general_target(session, user, "  Руководитель аналитики  ")
     assert intake.is_general(target) and target.parsed["role"] == "Руководитель аналитики"
     assert intake.view(target, await session.get(Vacancy, target.vacancy_id))["general"] is True
+    leak = await intake.add_general_target(session, user, "Аналитик, пишите anna.test@example.com +7 900 000-00-00")
+    assert "@" not in leak.parsed["role"] and "900" not in leak.parsed["role"]  # должность уходит в промпт
     other = await intake.add_general_target(session, user)  # каждый запуск отдельной целью
     assert other.id != target.id and (await session.get(Vacancy, other.vacancy_id)).title
 
