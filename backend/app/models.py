@@ -150,6 +150,21 @@ class Dossier(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class Target(Base):
+    """Вакансия, под которую пользователь делает CV: ссылка или текст от него самого, уточнения и ответы."""
+
+    __tablename__ = "targets"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    vacancy_id: Mapped[int] = mapped_column(ForeignKey("vacancies.id"))
+    source_url: Mapped[str | None] = mapped_column(String(1024))
+    company_domain: Mapped[str | None] = mapped_column(String(256))
+    parsed: Mapped[dict] = mapped_column(JSON, default=dict)  # schemas.VacancyParsed
+    questions: Mapped[list] = mapped_column(JSON, default=list)
+    answered: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class Package(Base):
     __tablename__ = "packages"
     id: Mapped[int] = mapped_column(primary_key=True)

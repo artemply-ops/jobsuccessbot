@@ -14,7 +14,7 @@ from app.config import ROOT
 from app.models import Company, Vacancy
 from app.schemas import ProfileData
 from app.services import llm
-from app.services.pii import EMAIL_RE, PHONE_RE
+from app.services.pii import scrub_contacts
 from app.services.sources import careers, superjob, trudvsem
 from app.services.sources.base import RawVacancy, fingerprint, norm
 
@@ -24,7 +24,7 @@ SEED_FILE = ROOT / "data" / "companies_seed.yaml"
 
 def _clean(text: str) -> str:
     """Контакты рекрутеров из описаний вакансий не храним и в LLM не отправляем."""
-    return EMAIL_RE.sub("[EMAIL]", PHONE_RE.sub("[PHONE]", text or ""))[:20_000]
+    return scrub_contacts(text or "")[:20_000]
 
 
 async def upsert(session: AsyncSession, raws: list[RawVacancy]) -> tuple[int, int]:

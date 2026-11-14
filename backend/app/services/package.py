@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -13,13 +13,15 @@ from app.config import get_settings
 from app.models import Company, Dossier, Package, Vacancy
 from app.schemas import DossierData, FactCheck, PackageDraft
 from app.services import llm
-from app.services.pii import EMAIL_RE, PHONE_RE
+from app.services.pii import Vault, depersonalize, scrub_contacts
 from app.services.profile import latest_profile, profile_to_text
 from app.services.sources.base import norm
 from app.services.sources.careers import allowed
 
 DOSSIER_TTL = timedelta(days=30)
 ABOUT_PATHS = ["", "/about", "/company", "/o-kompanii", "/about-us", "/mission", "/values", "/culture"]
+ABOUT_WORDS = ("о компании", "о нас", "кто мы", "миссия", "ценност", "культур", "about", "mission", "values",
+               "culture", "who we are", "our story")
 REVIEWS_NOTE = "Отзывы сотрудников: источник не подключён, ждёт юридической проверки условий площадок."
 
 SYSTEM_DOSSIER = """Ты аналитик. По текстам с сайта компании и её вакансии составь краткое досье для кандидата:
@@ -44,12 +46,29 @@ SYSTEM_FACTCHECK = """Ты проверяющий. Сравни каждое у�
 Если всё подтверждается, верни пустой список."""
 
 
+def about_links(html: str, base_url: str) -> list[str]:
+    """Ссылки на разделы о компании с главной: у многих сайтов они не лежат по стандартным путям."""
+    soup = BeautifulSoup(html, "html.parser")
+    host = urlparse(base_url).netloc
+    out = []
+    for a in soup.find_all("a", href=True):
+        label = (a.get_text(" ", strip=True) + " " + a["href"]).lower()
+        url = urljoin(base_url, a["href"]).split("#")[0]
+        if urlparse(url).netloc == host and any(w in label for w in ABOUT_WORDS):
+            out.append(url)
+    return list(dict.fromkeys(out))[:4]
+
+
 async def _site_text(domain: str) -> tuple[str, list[str]]:
+    """Тексты о компании с её сайта. Контакты и имена людей вычищаются до отправки в LLM."""
     s = get_settings()
-    texts, used = [], []
+    texts, used, queue, seen = [], [], [urljoin(f"https://{domain}", p) for p in ABOUT_PATHS], set()
     async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers={"User-Agent": s.http_user_agent}) as c:
-        for path in ABOUT_PATHS:
-            url = urljoin(f"https://{domain}", path)
+        while queue and sum(map(len, texts)) < 15000 and len(seen) < 12:
+            url = queue.pop(0)
+            if url in seen:
+                continue
+            seen.add(url)
             try:
                 if not await allowed(c, url):
                     continue
@@ -58,27 +77,29 @@ async def _site_text(domain: str) -> tuple[str, list[str]]:
                 continue
             if r.status_code != 200 or "text/html" not in r.headers.get("content-type", ""):
                 continue
+            if not used:  # главная: сначала идём по её ссылкам «о компании»
+                queue = about_links(r.text, str(r.url)) + queue
             soup = BeautifulSoup(r.text, "html.parser")
-            for t in soup(["script", "style", "noscript", "nav", "footer"]):
+            for t in soup(["script", "style", "noscript", "nav", "footer", "form"]):
                 t.decompose()
             txt = soup.get_text("\n", strip=True)[:6000]
             if txt and txt not in texts:
                 texts.append(txt)
                 used.append(str(r.url))
-            if sum(map(len, texts)) > 15000:
-                break
-    text = "\n\n---\n\n".join(texts)
-    return EMAIL_RE.sub("[EMAIL]", PHONE_RE.sub("[PHONE]", text)), used
+    text = scrub_contacts("\n\n---\n\n".join(texts))
+    return depersonalize(text, None, Vault()), used
 
 
-async def get_dossier(session: AsyncSession, vacancy: Vacancy) -> dict:
+async def get_dossier(session: AsyncSession, vacancy: Vacancy, domain: str | None = None) -> dict:
+    """domain: сайт компании, если он известен не из каталога (например, пользователь дал ссылку)."""
     company = await session.get(Company, vacancy.company_id) if vacancy.company_id else None
-    key = company.domain if company else f"name:{norm(vacancy.company_name)}"
+    domain = domain or (company.domain if company else None)
+    key = domain or f"name:{norm(vacancy.company_name)}"
     d = await session.get(Dossier, key)
     if d and d.updated_at.replace(tzinfo=d.updated_at.tzinfo or timezone.utc) > datetime.now(timezone.utc) - DOSSIER_TTL:
         return d.data
 
-    site, used = await _site_text(company.domain) if company else ("", [])
+    site, used = await _site_text(domain) if domain else ("", [])
     res = await llm.structured(
         schema=DossierData, system=SYSTEM_DOSSIER, effort="low", max_tokens=4000,
         user=f"Компания: {vacancy.company_name}\n\nТексты с сайта:\n{site or '(сайт недоступен или неизвестен)'}"

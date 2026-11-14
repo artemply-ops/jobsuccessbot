@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 from pydantic import BaseModel
 
 from app.config import get_settings
-from app.services.pii import EMAIL_RE, PHONE_RE
+from app.services.pii import scrub_contacts
 from app.services.sources.base import RawVacancy, guess_remote, strip_html
 
 CAREER_PATHS = ["/careers", "/career", "/jobs", "/vacancies", "/vakansii", "/job", "/rabota", "/team", "/hr"]
@@ -236,8 +236,7 @@ async def fetch_html_llm(careers_url: str, company_name: str) -> list[RawVacancy
                       for a in soup.find_all("a", href=True) if a.get_text(strip=True))[:15000]
     text = soup.get_text("\n", strip=True)[:20000]
     # На страницах бывают контакты рекрутеров: вычищаем до отправки в LLM
-    text = EMAIL_RE.sub("[EMAIL]", PHONE_RE.sub("[PHONE]", text))
-    links = EMAIL_RE.sub("[EMAIL]", links)
+    text, links = scrub_contacts(text), scrub_contacts(links)
     res = await llm.structured(
         schema=_HtmlVacancies, model=get_settings().llm_model_scoring, effort="low", max_tokens=6000,
         system="Выдели из страницы карьерного раздела список открытых вакансий. Только реальные вакансии, "

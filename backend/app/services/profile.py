@@ -11,7 +11,8 @@ from app.config import get_settings
 from app.models import Contact, Profile, Source, User
 from app.schemas import ProfileData, ProfileExtraction
 from app.services import llm
-from app.services.extract import ExtractError, extract_text
+from app.services import ocr
+from app.services.extract import ExtractError, NeedsOCR, clean, extract_text
 from app.services.pii import EMAIL_RE, PHONE_RE, Vault, _person_spans, depersonalize
 
 SYSTEM_PROFILE = """Ты карьерный аналитик. Из материалов кандидата собери структурированный профиль.
@@ -52,9 +53,15 @@ async def add_file_source(session: AsyncSession, user: User, filename: str, data
     path.write_bytes(data)
     src = Source(user_id=user.id, kind="file", filename=filename, path=str(path))
     try:
-        src.text = extract_text(filename, data)
+        try:
+            src.text = extract_text(filename, data)
+        except NeedsOCR:
+            c = await get_contact(session, user)
+            text, name = await ocr.recognize(filename, data, c.full_name)
+            src.text = clean(text)
+            c.full_name = c.full_name or name
         src.status = "parsed"
-    except ExtractError as e:
+    except (ExtractError, ocr.OCRError, llm.LLMError) as e:
         src.status, src.error = "error", str(e)
     except Exception as e:  # битый файл
         src.status, src.error = "error", f"Не удалось прочитать файл: {type(e).__name__}"

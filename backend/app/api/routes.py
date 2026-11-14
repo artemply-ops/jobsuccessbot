@@ -11,10 +11,10 @@ from app.auth import (AuthError, current_user, issue_token, upsert_tg_user, veri
                       verify_webapp_init_data)
 from app.config import get_settings
 from app.db import get_session
-from app.models import (Company, CompanyScore, CompanySubscription, Contact, Job, Package, Source, User, Vacancy,
-                        VacancyScore)
+from app.models import (Company, CompanyScore, CompanySubscription, Contact, Job, Package, Source, Target, User,
+                        Vacancy, VacancyScore)
 from app.schemas import ProfileData
-from app.services import collect, export, llm, profile
+from app.services import collect, export, intake, llm, profile
 from app.services.stt import STTError, transcribe_any
 from app.services.stt import available as stt_available
 
@@ -373,6 +373,69 @@ async def unsubscribe(company_id: int, user: User = Depends(current_user),
         await session.delete(sub)
         await session.commit()
     return {"ok": True}
+
+
+# ---------- Вакансия под CV (этап 2 пивота) ----------
+
+class TargetIn(BaseModel):
+    url: str | None = None
+    text: str | None = None
+    company_url: str | None = None
+
+
+async def _own_target(session: AsyncSession, target_id: int, user: User) -> tuple[Target, Vacancy]:
+    t = await session.get(Target, target_id)
+    if t is None or t.user_id != user.id:
+        raise HTTPException(404)
+    return t, await session.get(Vacancy, t.vacancy_id)
+
+
+@api.post("/targets")
+async def add_target(body: TargetIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Вакансия ссылкой и/или текстом -> разбор + досье компании."""
+    _need_consent(user)
+    try:
+        t = await intake.add_target(session, user, url=body.url, text=body.text, company_url=body.company_url)
+    except intake.IntakeError as e:
+        raise HTTPException(400, str(e))
+    except llm.LLMError as e:
+        raise HTTPException(502, str(e))
+    d = await intake.dossier(session, t)
+    await session.commit()
+    return intake.view(t, await session.get(Vacancy, t.vacancy_id), d)
+
+
+@api.get("/targets/{target_id}")
+async def get_target(target_id: int, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    t, v = await _own_target(session, target_id, user)
+    return intake.view(t, v)
+
+
+@api.post("/targets/{target_id}/questions")
+async def target_questions(target_id: int, user: User = Depends(current_user),
+                           session: AsyncSession = Depends(get_session)):
+    t, v = await _own_target(session, target_id, user)
+    try:
+        qs = await intake.clarify(session, user, t)
+    except llm.LLMError as e:
+        raise HTTPException(502, str(e))
+    await session.commit()
+    return {"questions": qs, "ai": llm.available()}
+
+
+@api.post("/targets/{target_id}/answers")
+async def target_answers(target_id: int, body: TextIn, user: User = Depends(current_user),
+                         session: AsyncSession = Depends(get_session)):
+    _need_consent(user)
+    t, v = await _own_target(session, target_id, user)
+    try:
+        await intake.answer(session, user, t, body.text)
+    except intake.IntakeError as e:
+        raise HTTPException(400, str(e))
+    except llm.LLMError as e:
+        raise HTTPException(502, str(e))
+    await session.commit()
+    return intake.view(t, v)
 
 
 # ---------- Пакеты ----------

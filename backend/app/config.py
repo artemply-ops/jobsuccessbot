@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_model_main: str = "anthropic/claude-sonnet-5.5"  # профиль, досье, CV и письмо
     llm_model_scoring: str = "anthropic/claude-haiku-5.5"  # массовый скоринг вакансий и разбор страниц
+    llm_model_vision: str = "anthropic/claude-haiku-5.5"  # чтение обезличенных копий сканов (services/ocr.py)
     llm_enabled: bool = True
     # Если провайдер недоступен с российских IP: запросы через зарубежный прокси
     llm_proxy_url: str = ""

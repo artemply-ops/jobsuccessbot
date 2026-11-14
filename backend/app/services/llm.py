@@ -80,6 +80,16 @@ def client() -> httpx.AsyncClient:
     return _client
 
 
+def _content(user: str, images: list[bytes] | None):
+    if not images:
+        return user
+    import base64
+
+    return [{"type": "text", "text": user}] + [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(i).decode()}}
+        for i in images]
+
+
 async def structured(
     *,
     schema: type[T],
@@ -88,6 +98,7 @@ async def structured(
     model: str | None = None,
     effort: str = "medium",
     max_tokens: int = 12000,  # OpenRouter резервирует оплату под максимум: не завышать
+    images: list[bytes] | None = None,  # PNG, только уже обезличенные (см. services/ocr.py)
 ) -> T:
     s = get_settings()
     if not available():
@@ -97,7 +108,7 @@ async def structured(
 
     body = {
         "model": model or s.llm_model_main,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": _content(user, images)}],
         "max_tokens": max_tokens,
         "response_format": {"type": "json_schema",
                             "json_schema": {"name": schema.__name__, "strict": True, "schema": strict_schema(schema)}},

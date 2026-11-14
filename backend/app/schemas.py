@@ -135,3 +135,26 @@ class FactFlag(BaseModel):
 
 class FactCheck(BaseModel):
     flags: list[FactFlag]
+
+
+# ---------- Вакансия от пользователя и уточнения (этап 2 пивота) ----------
+
+class VacancyParsed(BaseModel):
+    title: str = Field(description="название должности")
+    company_name: str = Field(description="название компании-работодателя; пусто, если не указано")
+    company_site: str = Field(description="домен сайта компании, если он прямо указан в тексте, иначе пусто")
+    city: str = ""
+    remote: bool | None = None
+    salary_from: int | None = None
+    salary_to: int | None = None
+    currency: str = ""
+    seniority: str = Field("", description="junior | middle | senior | lead | head | c-level или пусто")
+    responsibilities: list[str] = Field(default_factory=list, description="задачи, коротко, до 10")
+    requirements: list[str] = Field(default_factory=list, description="обязательные требования, до 12")
+    nice_to_have: list[str] = Field(default_factory=list, description="будет плюсом, до 8")
+    keywords: list[str] = Field(default_factory=list, description="ключевые навыки и термины вакансии, до 15")
+    language: str = Field("ru", description="язык вакансии: ru | en")
+
+
+class ClarifyQuestions(BaseModel):
+    questions: list[Question] = Field(description="2-3 вопроса кандидату")

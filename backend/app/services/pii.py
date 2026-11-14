@@ -106,6 +106,22 @@ def restore(text: str, full_name: str | None, email: str | None, phone: str | No
     return TOKEN_RE.sub(lambda m: repl.get(m.group(0), m.group(0)), text)
 
 
+TEL_LINK_RE = re.compile(r"(?i)(?:tel|mailto|callto|sms|whatsapp|viber):[^\s\"'<>)]+")
+
+
+def scrub_contacts(text: str) -> str:
+    """Чужие контакты (рекрутеры, сайты компаний) вычищаются до хранения и до отправки в LLM.
+
+    Ловит то же, что проверяет has_pii, плюс ссылки tel:/mailto:, иначе страховка блокирует вызов LLM.
+    """
+    if not text:
+        return text or ""
+    out = TEL_LINK_RE.sub("[CONTACT]", text)
+    out = EMAIL_RE.sub("[EMAIL]", out)
+    out = SNILS_RE.sub("[ID]", out)
+    return PHONE_RE.sub("[PHONE]", out)
+
+
 def has_pii(text: str) -> bool:
     """Страховка перед вызовом LLM: остались ли очевидные ПДн."""
     return bool(EMAIL_RE.search(text) or PHONE_RE.search(text) or SNILS_RE.search(text))
