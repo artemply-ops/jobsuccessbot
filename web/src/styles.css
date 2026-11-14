@@ -111,3 +111,27 @@ label.check input { width: auto; }
 .tabs button.on, .chips button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 .cv li.flagged { color: var(--bad); text-decoration: line-through; }
 input[type="range"] { width: 140px; padding: 0; }
+
+/* Мастер «резюме под вакансию» (pages/Make.tsx) */
+.steps { display: flex; gap: 4px; overflow-x: auto; font-size: 12px; padding-bottom: 2px; }
+.steps span { flex: 1; min-width: 64px; text-align: center; padding: 6px 4px; border-radius: 8px; color: var(--muted);
+  background: var(--bg); border: 1px solid var(--border); white-space: nowrap; }
+.steps span.done { color: var(--ok); }
+.steps span.on { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+.schemes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.scheme { display: flex; flex-direction: column; gap: 6px; align-items: stretch; padding: 8px; border-radius: 12px;
+  border: 2px solid var(--border); background: var(--bg2); color: var(--text); font: inherit; cursor: pointer; text-align: left; }
+.scheme.on { border-color: var(--accent); }
+.scheme .sheet { display: flex; flex-direction: column; aspect-ratio: 1 / 1.1; background: #fff; border-radius: 4px; overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .15); }
+.scheme .stripe { height: 4%; }
+.scheme .head { height: 34%; display: flex; flex-direction: column; justify-content: center; gap: 8%; padding: 0 10%; }
+.scheme .nm { display: block; width: 55%; height: 12%; background: #fff; border-radius: 2px; }
+.scheme .hl { display: block; width: 38%; height: 9%; border-radius: 2px; }
+.scheme .body { flex: 1; margin: 10%; background: repeating-linear-gradient(#e6e7ea 0 6%, transparent 6% 14%); }
+.previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.preview { display: flex; flex-direction: column; gap: 8px; }
+.preview img { width: 100%; border-radius: 6px; border: 1px solid var(--border); background: #fff; }
+.preview .ph { aspect-ratio: 1 / 1.41; display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--border); border-radius: 6px; }
+ol { margin: 4px 0; padding-left: 20px; }

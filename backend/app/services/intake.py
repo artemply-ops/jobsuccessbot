@@ -157,9 +157,11 @@ async def fetch_page(url: str) -> Page:
 def basic_parse(text: str, page: Page | None = None) -> VacancyParsed:
     """Разбор без ИИ: название из разметки или первой строки, компания из разметки."""
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    title = (page.title if page and page.jsonld else "") or next((ln for ln in lines if len(ln) <= 120), "Вакансия")
-    return VacancyParsed(title=title[:200], company_name=(page.company_name if page else "") or "",
-                         company_site="", remote=guess_remote(text))
+    first = re.split(r"(?<=[^\s.]{3})\.\s", lines[0])[0].strip(" .") if lines else ""  # первое предложение
+    title = (page.title if page and page.jsonld else "") or (first if 0 < len(first) <= 120 else "Вакансия")
+    m = re.search(r"(?im)^\W*(?:компания|работодатель|company)\s*[:\-—]\s*([^\n.;]{2,80})", text.replace(". ", ".\n"))
+    company = (page.company_name if page else "") or (m.group(1).strip() if m else "")
+    return VacancyParsed(title=title[:200], company_name=company, company_site="", remote=guess_remote(text))
 
 
 async def parse_vacancy(text: str, page: Page | None = None) -> VacancyParsed:

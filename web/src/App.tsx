@@ -5,6 +5,7 @@ import ProfilePage from "./pages/Profile";
 import VacanciesPage from "./pages/Vacancies";
 import VacancyPage from "./pages/Vacancy";
 import CompaniesPage from "./pages/Companies";
+import MakePage from "./pages/Make";
 
 export type Me = {
   id: number;
@@ -55,18 +56,19 @@ export default function App() {
       </header>
       <main className="content">
         <Routes>
-          <Route path="/" element={<Navigate to="/profile" replace />} />
+          <Route path="/" element={<Navigate to="/make" replace />} />
+          <Route path="/make" element={<MakePage />} />
           <Route path="/profile" element={<ProfilePage me={me!} onMeChange={loadMe} />} />
           <Route path="/vacancies" element={<VacanciesPage />} />
           <Route path="/vacancies/:id" element={<VacancyPage />} />
           <Route path="/companies" element={<CompaniesPage />} />
-          <Route path="*" element={<Navigate to="/profile" replace />} />
+          <Route path="*" element={<Navigate to="/make" replace />} />
         </Routes>
       </main>
       <nav className="tabbar">
+        {/* Пивот 08.11: в меню только резюме и профиль; вакансии и компании доступны по прямой ссылке */}
+        <NavLink to="/make">Резюме</NavLink>
         <NavLink to="/profile">Профиль</NavLink>
-        <NavLink to="/vacancies">Вакансии</NavLink>
-        <NavLink to="/companies">Компании</NavLink>
       </nav>
     </div>
   );
@@ -113,7 +115,7 @@ function Login({ onDone, error }: { onDone: () => void; error: string }) {
     <div className="center stack narrow">
       <img src="/icon.svg" width={64} height={64} alt="" />
       <h1>JobPilot</h1>
-      <p className="muted">Профиль из резюме и голосовых, подбор вакансий с оценкой и CV под каждую вакансию.</p>
+      <p className="muted">Резюме, резюме на одну страницу и сопроводительное письмо под конкретную вакансию.</p>
       <div ref={widgetRef} />
       {cfg && !cfg.bot_username && !cfg.dev_login && <p className="muted">Вход через Telegram ещё не настроен.</p>}
       {cfg?.dev_login && <button className="btn secondary" onClick={dev}>Войти (локальная разработка)</button>}
