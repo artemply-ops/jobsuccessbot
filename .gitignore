@@ -7,3 +7,4 @@ data/*.db
 data/files/
 web/node_modules/
 web/dist/
+data/logs/
