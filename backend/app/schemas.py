@@ -112,9 +112,15 @@ class CVExperience(BaseModel):
     bullets: list[str]
 
 
+class Highlight(BaseModel):
+    value: str = Field(description="число из профиля дословно, например «180 тыс.», «+27%», «14»")
+    label: str = Field(description="что это за число, 2-5 слов")
+
+
 class CV(BaseModel):
     headline: str
     summary: str
+    highlights: list[Highlight] = Field(default_factory=list, description="до 8 показателей, только из профиля")
     skills: list[str]
     experience: list[CVExperience]
     education: list[str] = Field(default_factory=list)
@@ -158,3 +164,21 @@ class VacancyParsed(BaseModel):
 
 class ClarifyQuestions(BaseModel):
     questions: list[Question] = Field(description="2-3 вопроса кандидату")
+
+
+# ---------- Пакет под вакансию (этап 3 пивота) ----------
+
+PACKAGE_ITEMS = ("cv", "one_page", "letter")  # полное резюме, резюме на одну страницу, сопроводительное письмо
+
+
+class TailoredCV(BaseModel):
+    cv: CV
+
+
+class TailoredLetter(BaseModel):
+    cover_letter: str
+
+
+class TailoredBoth(BaseModel):
+    cv: CV
+    cover_letter: str

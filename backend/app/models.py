@@ -39,6 +39,7 @@ class Contact(Base):
     links: Mapped[list] = mapped_column(JSON, default=list)
     # Имена третьих лиц, найденные в документах (рекомендатели и т.п.): токен -> исходник
     vault: Mapped[dict] = mapped_column(JSON, default=dict)
+    photo_path: Mapped[str | None] = mapped_column(String(512))  # фото для CV, в LLM не уходит
 
 
 class Source(Base):
@@ -176,6 +177,10 @@ class Package(Base):
     recruiter_message: Mapped[str] = mapped_column(Text)
     fact_flags: Mapped[list] = mapped_column(JSON, default=list)
     instruction: Mapped[str | None] = mapped_column(Text)
+    # Этап 3 пивота: пакет под цель пользователя. Колонки nullable: init_db досоздаёт их на старой базе
+    target_id: Mapped[int | None] = mapped_column(ForeignKey("targets.id"), index=True)
+    items: Mapped[list | None] = mapped_column(JSON)  # подмножество schemas.PACKAGE_ITEMS
+    scheme: Mapped[str | None] = mapped_column(String(32))  # cv_render.SCHEMES
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 

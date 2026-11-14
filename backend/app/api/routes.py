@@ -14,7 +14,7 @@ from app.db import get_session
 from app.models import (Company, CompanyScore, CompanySubscription, Contact, Job, Package, Source, Target, User,
                         Vacancy, VacancyScore)
 from app.schemas import ProfileData
-from app.services import collect, export, intake, llm, profile
+from app.services import collect, cv_render, export, intake, llm, profile, tailor
 from app.services.stt import STTError, transcribe_any
 from app.services.stt import available as stt_available
 
@@ -423,6 +423,29 @@ async def target_questions(target_id: int, user: User = Depends(current_user),
     return {"questions": qs, "ai": llm.available()}
 
 
+class TailorIn(BaseModel):
+    items: list[str]  # cv | one_page | letter, любой набор
+    scheme: str = "graphite"
+    instruction: str | None = None  # одна итерация правок
+
+
+@api.post("/targets/{target_id}/package")
+async def target_package(target_id: int, body: TailorIn, user: User = Depends(current_user),
+                         session: AsyncSession = Depends(get_session)):
+    _need_consent(user)
+    t, _ = await _own_target(session, target_id, user)
+    if not llm.available():
+        return {"stub": True, "message": str(llm.AINotConnected("Генерация резюме и письма"))}
+    try:
+        items = tailor.normalize_items(body.items)
+    except tailor.PackageError as e:
+        raise HTTPException(400, str(e))
+    if body.scheme not in cv_render.SCHEMES:
+        raise HTTPException(400, "Неизвестная цветовая схема")
+    return {"job_id": await jobs.enqueue("tailor", user.id,
+                                         jobs.tailor_job(user.id, t.id, items, body.scheme, body.instruction))}
+
+
 @api.post("/targets/{target_id}/answers")
 async def target_answers(target_id: int, body: TextIn, user: User = Depends(current_user),
                          session: AsyncSession = Depends(get_session)):
@@ -463,9 +486,103 @@ async def _own_package(session: AsyncSession, package_id: int, user: User) -> Pa
 async def get_package(package_id: int, user: User = Depends(current_user),
                       session: AsyncSession = Depends(get_session)):
     pkg = await _own_package(session, package_id, user)
-    view = export.cv_view(pkg, await session.get(Contact, user.id), drop_flagged=False)
+    contact = await session.get(Contact, user.id)
+    if pkg.items:  # пакет этапа 3: выбранные документы и шаблон
+        view = export.tailored_view(pkg, contact, drop_flagged=False)
+        return {"id": pkg.id, "target_id": pkg.target_id, "version": pkg.version, "items": pkg.items,
+                "scheme": pkg.scheme, "flags": pkg.fact_flags, "instruction": pkg.instruction,
+                "revision_left": not pkg.instruction, **view}
+    view = export.cv_view(pkg, contact, drop_flagged=False)
     return {"id": pkg.id, "vacancy_id": pkg.vacancy_id, "version": pkg.version, "flags": pkg.fact_flags,
             "instruction": pkg.instruction, **view}
+
+
+class SchemeIn(BaseModel):
+    scheme: str
+
+
+@api.patch("/packages/{package_id}")
+async def set_scheme(package_id: int, body: SchemeIn, user: User = Depends(current_user),
+                     session: AsyncSession = Depends(get_session)):
+    """Смена цветовой схемы: без LLM, файлы просто перерисовываются."""
+    pkg = await _own_package(session, package_id, user)
+    if body.scheme not in cv_render.SCHEMES:
+        raise HTTPException(400, "Неизвестная цветовая схема")
+    pkg.scheme = body.scheme
+    await session.commit()
+    return {"ok": True, "scheme": pkg.scheme}
+
+
+@api.get("/packages/{package_id}/file/{item}")
+async def package_file(package_id: int, item: str, accept_flags: bool = False, preview: bool = False,
+                       user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Документ пакета: item = cv | one_page | letter. preview=true отдаёт PNG первой страницы."""
+    pkg = await _own_package(session, package_id, user)
+    contact = await session.get(Contact, user.id)
+    vacancy = await session.get(Vacancy, pkg.vacancy_id)
+    photo = _photo(contact)
+    try:
+        data = export.render_item(pkg, contact, item, photo, accept_flags, company=vacancy.company_name,
+                                  position=vacancy.title)
+    except export.FlagsNotAccepted as e:
+        raise HTTPException(409, str(e))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    if preview:
+        return Response(cv_render.preview_png(data), media_type="image/png")
+    name = {"cv": "resume", "one_page": "resume_one_page", "letter": "cover_letter"}[item]
+    return Response(data, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{name}_v{pkg.version}.pdf"'})
+
+
+@api.get("/schemes")
+async def schemes():
+    return [{"key": s.key, "title": s.title, "head": s.head, "highlight": s.highlight, "signal": s.signal}
+            for s in cv_render.SCHEMES.values()]
+
+
+def _photo(contact: Contact | None) -> bytes | None:
+    from pathlib import Path
+
+    p = Path(contact.photo_path) if contact and contact.photo_path else None
+    return p.read_bytes() if p and p.exists() else None
+
+
+@api.put("/contact/photo")
+async def put_photo(file: UploadFile = File(...), user: User = Depends(current_user),
+                    session: AsyncSession = Depends(get_session)):
+    """Фото для CV. Хранится у нас, в LLM не уходит."""
+    import uuid
+
+    _need_consent(user)
+    data = await file.read()
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(413, "Фото больше 8 МБ")
+    try:
+        from PIL import Image
+        import io
+
+        Image.open(io.BytesIO(data)).verify()
+    except Exception:
+        raise HTTPException(400, "Это не изображение")
+    contact = await profile.get_contact(session, user)
+    path = get_settings().files_dir / f"{user.id}_photo_{uuid.uuid4().hex}.img"
+    path.write_bytes(data)
+    contact.photo_path = str(path)
+    await session.commit()
+    return {"ok": True}
+
+
+@api.delete("/contact/photo")
+async def delete_photo(user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    from pathlib import Path
+
+    contact = await profile.get_contact(session, user)
+    if contact.photo_path:
+        Path(contact.photo_path).unlink(missing_ok=True)
+        contact.photo_path = None
+    await session.commit()
+    return {"ok": True}
 
 
 @api.get("/packages/{package_id}/{fmt}")

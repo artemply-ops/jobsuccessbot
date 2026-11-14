@@ -150,3 +150,79 @@ def to_pdf(pkg: Package, contact: Contact | None, accept_flags: bool = False) ->
             p(para)
             pdf.ln(1.5)
     return bytes(pdf.output())
+
+
+# ---------- Этап 3 пивота: файлы в шаблоне cv_render ----------
+
+def tailored_view(pkg: Package, contact: Contact | None, drop_flagged: bool = True) -> dict:
+    """Данные для шаблона с реальными контактами. Неподтверждённые пункты и показатели CV выкидываем."""
+    flagged = _flagged(pkg) if drop_flagged else set()
+    vault = Vault(dict(contact.vault or {})) if contact else Vault()
+    r = lambda t: restore(t or "", contact.full_name if contact else None, contact.email if contact else None,  # noqa: E731
+                          contact.phone if contact else None, vault)
+    cv = pkg.cv or {}
+    hl = [h for h in cv.get("highlights", [])
+          if h["value"].strip() not in flagged and f"{h['value']} {h['label']}".strip() not in flagged]
+    return {
+        "name": (contact.full_name if contact else None) or "",
+        "contacts": " · ".join(x for x in [contact.email, contact.phone, contact.city] if x) if contact else "",
+        "headline": r(cv.get("headline")),
+        "summary": r(cv.get("summary")),
+        "highlights": [{"value": r(h["value"]), "label": r(h["label"])} for h in hl],
+        "skills": [r(s) for s in cv.get("skills", [])],
+        "experience": [{"period": e["period"], "company": r(e["company"]), "role": r(e["role"]),
+                        "bullets": [r(b) for b in e["bullets"] if b.strip() not in flagged]}
+                       for e in cv.get("experience", [])],
+        "education": [r(x) for x in cv.get("education", [])],
+        "languages": [r(x) for x in cv.get("languages", [])],
+        "cover_letter": r(pkg.cover_letter),
+    }
+
+
+def fit_one_page(v: dict, scheme: str, photo: bytes | None = None, max_steps: int = 80) -> tuple[bytes, dict]:
+    """Ужимает резюме до одной страницы без LLM: модель уже отсортировала пункты по важности.
+
+    Порядок: убираем последний пункт у роли с наибольшим числом пунктов (при равенстве у более старой,
+    у трёх свежих ролей остаётся хотя бы 2 пункта), затем старые роли целиком, затем второй ряд показателей.
+    """
+    import copy
+
+    from app.services.cv_render import render_cv
+
+    v = copy.deepcopy(v)
+    for _ in range(max_steps):
+        pdf, pages = render_cv(v, scheme, one_page=True, photo=photo)
+        if pages <= 1:
+            return pdf, v
+        exp = v.get("experience") or []
+        floor = lambda i: 2 if i < 3 else 1  # noqa: E731
+        cand = [(len(e["bullets"]), i) for i, e in enumerate(exp) if len(e["bullets"]) > floor(i)]
+        if cand:
+            _, i = max(cand)
+            exp[i]["bullets"].pop()
+        elif len(exp) > 3:
+            exp.pop()
+        elif len(v.get("highlights") or []) > 4:
+            v["highlights"] = v["highlights"][:4]
+        elif len(v.get("skills") or []) > 8:
+            v["skills"] = v["skills"][:8]
+        else:
+            break
+    return render_cv(v, scheme, one_page=True, photo=photo)[0], v
+
+
+def render_item(pkg: Package, contact: Contact | None, item: str, photo: bytes | None = None,
+                accept_flags: bool = False, scheme: str | None = None, company: str = "", position: str = "") -> bytes:
+    """Один документ пакета в PDF: cv, one_page или letter."""
+    from app.services.cv_render import render_cv, render_letter
+
+    if item not in (pkg.items or []):
+        raise ValueError("Этого документа нет в пакете")
+    scheme = scheme or pkg.scheme or "graphite"
+    v = tailored_view(pkg, contact)
+    if item == "letter":
+        _check(pkg, accept_flags)
+        return render_letter(v, scheme, company=company, position=position)
+    if item == "one_page":
+        return fit_one_page(v, scheme, photo)[0]
+    return render_cv(v, scheme, one_page=False, photo=photo)[0]

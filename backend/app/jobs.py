@@ -98,6 +98,17 @@ def package_job(user_id: int, vacancy_id: int, instruction: str | None) -> JobFn
     return fn
 
 
+def tailor_job(user_id: int, target_id: int, items: list[str], scheme: str, instruction: str | None) -> JobFn:
+    async def fn(s: AsyncSession) -> dict:
+        from app.models import Target, User
+        from app.services import tailor
+
+        pkg = await tailor.build(s, await s.get(User, user_id), await s.get(Target, target_id), items, scheme,
+                                 instruction)
+        return {"package_id": pkg.id, "version": pkg.version, "items": pkg.items, "flags": len(pkg.fact_flags)}
+    return fn
+
+
 async def daily_refresh() -> dict:
     """Ежедневно: проверка каталога, сбор с карьерных страниц, пересчёт для всех пользователей с профилем."""
     async with SessionLocal() as s:
