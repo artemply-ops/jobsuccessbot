@@ -87,7 +87,7 @@ async def test_send_package_to_telegram_and_contact_patch(session, monkeypatch):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         r = (await c.post(f"/api/packages/{p.id}/send", json={}, headers=h)).json()
         assert r["sent"] == 1 and r["skipped"] == ["letter"]  # письмо с замечаниями ждёт подтверждения
-        assert sent[0][0] == 777001 and sent[0][1][0].startswith("Резюме")
+        assert sent[0][0] == 777001 and "_Резюме_Тестовая_роль_Тестовая_компания" in sent[0][1][0]  # имя с ролью и компанией
         r = (await c.post(f"/api/packages/{p.id}/send", json={"accept_flags": True}, headers=h)).json()
         assert r["sent"] == 2
         assert (await c.put("/api/contact", json={"full_name": "Анна Тестова"}, headers=h)).status_code == 200

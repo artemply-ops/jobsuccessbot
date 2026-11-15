@@ -570,8 +570,8 @@ async def send_files(message: Message, package_id: int, accept_flags: bool = Fal
         except Exception as e:
             await _error(message, e, f"render {item}")
             continue
-        name = {"cv": "Резюме", "one_page": "Одностраничник", "letter": "Сопроводительное_письмо"}[item]
-        await message.answer_document(BufferedInputFile(data, f"{name}_v{pkg.version}.pdf"))
+        name = export.file_name(item, pkg, contact, vacancy.title, vacancy.company_name)
+        await message.answer_document(BufferedInputFile(data, name))
     kb = []
     if "letter" in (pkg.items or []) and letter_flags and not accept_flags:
         await message.answer("⚠️ В письме есть утверждения, которых нет в вашем профиле:\n" + "\n".join(

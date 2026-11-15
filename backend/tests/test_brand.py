@@ -44,3 +44,17 @@ def test_icon_fallback_finds_brand_color():
     im.save(buf, "PNG")
     colors = brand.pick(brand.icon_colors(buf.getvalue()))
     assert colors and brand.is_brand(colors[0])
+
+
+def test_pretty_file_names():
+    from types import SimpleNamespace
+
+    from app.services import export
+
+    pkg = SimpleNamespace(version=1, items=["cv", "one_page", "letter"])
+    contact = SimpleNamespace(full_name="Иван Иванов Петрович")
+    assert export.file_name("cv", pkg, contact, "Product Manager / B2B", "Сбер") == "Иван_Иванов_Резюме_Product_Manager_B2B_Сбер.pdf"
+    pkg.version = 2
+    assert export.file_name("one_page", pkg, contact, "Бухгалтер", "Компания не указана") == "Иван_Иванов_Одностраничник_Бухгалтер_v2.pdf"
+    assert export.file_name("letter", pkg, None, "", "") == "Сопроводительное_письмо_v2.pdf"
+    assert set(export.file_names(pkg, contact, "Роль", "Ко")) == {"cv", "one_page", "letter"}

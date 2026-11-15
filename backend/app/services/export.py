@@ -21,6 +21,35 @@ class FlagsNotAccepted(ValueError):
     pass
 
 
+FILE_TITLES = {"cv": "Резюме", "one_page": "Одностраничник", "letter": "Сопроводительное_письмо"}
+NO_COMPANY = "Компания не указана"  # как в services/intake.py
+
+
+def _slug(s: str | None, limit: int) -> str:
+    """Кусок имени файла: буквы и цифры любого алфавита, пробелы и знаки в «_», не длиннее limit."""
+    import re
+
+    s = re.sub(r"[^\w]+", "_", (s or "").strip(), flags=re.UNICODE).strip("_")
+    return s[:limit].rstrip("_")
+
+
+def file_name(item: str, pkg: Package, contact: Contact | None, role: str | None = None, company: str | None = None,
+              ext: str = "pdf") -> str:
+    """Имя файла для скачивания: Имя_Фамилия_Резюме_Роль_Компания[_v2].pdf (решение владельца 16.11.2026).
+    Имя берём из контактов (как в самом документе), роль из вакансии, компанию если она указана."""
+    who = "_".join((contact.full_name or "").split()[:2]) if contact else ""
+    parts = [_slug(who, 40), FILE_TITLES.get(item, "Документ"), _slug(role, 50)]
+    if company and company.strip() and company != NO_COMPANY:
+        parts.append(_slug(company, 30))
+    if pkg.version and pkg.version > 1:
+        parts.append(f"v{pkg.version}")
+    return "_".join(p for p in parts if p) + f".{ext}"
+
+
+def file_names(pkg: Package, contact: Contact | None, role: str | None, company: str | None) -> dict:
+    return {it: file_name(it, pkg, contact, role, company) for it in (pkg.items or [])}
+
+
 def _flagged(pkg: Package) -> set[str]:
     return {f["text"].strip() for f in pkg.fact_flags or []}
 

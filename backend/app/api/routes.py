@@ -576,6 +576,8 @@ async def get_package(package_id: int, user: User = Depends(current_user),
     contact = await session.get(Contact, user.id)
     if pkg.items:  # пакет этапа 3: выбранные документы и шаблон
         view = export.tailored_view(pkg, contact, drop_flagged=False)
+        vac = await session.get(Vacancy, pkg.vacancy_id)
+        view["file_names"] = export.file_names(pkg, contact, vac.title, vac.company_name)
         _, improve_left = await tailor.revisions(session, user.id, pkg.target_id)
         target = await session.get(Target, pkg.target_id) if pkg.target_id else None
         revision_left = await billing.can(session, user, "revision")
@@ -625,9 +627,12 @@ async def package_file(package_id: int, item: str, accept_flags: bool = False, p
         raise HTTPException(404, str(e))
     if preview:
         return Response(await asyncio.to_thread(cv_render.preview_png, data), media_type="image/png")
-    name = {"cv": "resume", "one_page": "one_pager", "letter": "cover_letter"}[item]
-    return Response(data, media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="{name}_v{pkg.version}.pdf"'})
+    from urllib.parse import quote
+
+    name = export.file_name(item, pkg, contact, vacancy.title, vacancy.company_name)
+    ascii_name = {"cv": "resume", "one_page": "one_pager", "letter": "cover_letter"}[item] + f"_v{pkg.version}.pdf"
+    return Response(data, media_type="application/pdf", headers={  # кириллица в имени по RFC 5987
+        "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"})
 
 
 class SendIn(BaseModel):
@@ -647,11 +652,10 @@ async def send_to_telegram(package_id: int, body: SendIn, user: User = Depends(c
     contact = await session.get(Contact, user.id)
     vacancy = await session.get(Vacancy, pkg.vacancy_id)
     photo = _photo(contact)
-    names = {"cv": "Резюме", "one_page": "Одностраничник", "letter": "Сопроводительное_письмо"}
     files, skipped = [], []
     for item in [i for i in (body.items or pkg.items or []) if i in (pkg.items or [])]:
         try:
-            files.append((f"{names[item]}_v{pkg.version}.pdf",
+            files.append((export.file_name(item, pkg, contact, vacancy.title, vacancy.company_name),
                           export.render_item(pkg, contact, item, photo, body.accept_flags,
                                              company=vacancy.company_name, position=vacancy.title)))
         except export.FlagsNotAccepted:
@@ -751,8 +755,10 @@ async def list_packages(user: User = Depends(current_user), session: AsyncSessio
     """Мои резюме: все версии пакетов, последние сверху."""
     rows = (await session.execute(select(Package, Vacancy).join(Vacancy, Vacancy.id == Package.vacancy_id)
                                   .where(Package.user_id == user.id).order_by(Package.id.desc()).limit(100))).all()
+    contact = await session.get(Contact, user.id)
     return [{"id": p.id, "target_id": p.target_id, "title": v.title, "company": v.company_name, "version": p.version,
              "items": p.items or [], "created_at": p.created_at.isoformat(),
+             "file_names": export.file_names(p, contact, v.title, v.company_name),
              "coverage": (p.coverage or {}).get("score")} for p, v in rows]
 
 

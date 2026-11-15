@@ -22,7 +22,7 @@ type Req = { requirement: string; status: "covered" | "partial" | "missing"; evi
 type Cov = { requirements: Req[]; req_covered: number; req_partial: number; req_total: number;
   keywords_covered: string[]; keywords_missing: string[]; kw_total: number; score: number };
 type Pkg = { id: number; version: number; items: string[]; scheme: string; flags: Flag[]; revision_left: boolean; revision_price: number;
-  improve_left: number; coverage: Cov | null; coverage_before: Cov | null };
+  improve_left: number; coverage: Cov | null; coverage_before: Cov | null; file_names?: Record<string, string> };
 type ReviewRes = { score: number; checks: { key: string; title: string; ok: boolean; note: string }[];
   advice: { problem: string; fix: string }[] };
 
@@ -585,7 +585,7 @@ function Result(props: {
     setLoadingItem(it);
     try {
       await download(`/packages/${pkg!.id}/file/${it}${it === "letter" && accept ? "?accept_flags=true" : ""}`,
-        `${FILE_NAMES[it]}_v${pkg!.version}.pdf`);
+        pkg!.file_names?.[it] || `${FILE_NAMES[it]}_v${pkg!.version}.pdf`);  // Имя_Фамилия_Резюме_Роль_Компания.pdf
     } finally {
       setLoadingItem("");
     }

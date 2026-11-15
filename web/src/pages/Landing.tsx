@@ -15,10 +15,12 @@ type Pub = { products: Product[]; bot_username: string; legal: { name: string; i
 type Item = Record<string, string>;
 export type Texts = {
   hero: { eyebrow: string; title: string; lead: string; cta: string; cta2: string; trust: Item[] };
+  card: { name: string; role: string; contacts: string; summary: string; highlights: Item[]; job: string; bullets: string;
+    score: string; score_title: string; score_note: string };
   band: { title: string; items: Item[] };
   how: { title: string; subtitle: string; quick_label: string; quick_title: string; quick_time: string; quick_steps: Item[];
     long_label: string; long_title: string; long_time: string; long_steps: Item[] };
-  example: { title: string; subtitle: string; before: string; after: Item[] };
+  example: { title: string; subtitle: string; items: Item[] };
   get: { title: string; items: Item[] };
   prices: { title: string; subtitle: string; badge: string };
   faq: { title: string; items: Item[] };
@@ -31,6 +33,7 @@ export default function Landing({ onAuthed }: { onAuthed: () => void }) {
   const [login, setLogin] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [ex, setEx] = useState(0);  // какой пример «было / стало» открыт
   useEffect(() => { api<Pub>("/billing/public").then(setPub).catch(() => {}); }, []);
   useEffect(() => { api<Texts>("/site/texts").then(setT).catch(() => {}); }, []);
   useEffect(() => { if (new URLSearchParams(window.location.search).has("login_error")) setLogin(true); }, []);
@@ -50,6 +53,8 @@ export default function Landing({ onAuthed }: { onAuthed: () => void }) {
   const Cta = ({ big }: { big?: boolean }) => (
     <button className={`btn gold ${big ? "big" : ""}`} disabled={busy} onClick={start}>{busy ? "Открываю…" : f(t.hero.cta)}</button>
   );
+  const lines = (x: string) => (x || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  const cur = t.example.items[Math.min(ex, t.example.items.length - 1)];
   const Steps = ({ items }: { items: Item[] }) => (
     <ol className="how-steps compact">{items.map((s, i) => <li key={i}><b>{f(s.title)}</b><span>{f(s.text)}</span></li>)}</ol>
   );
@@ -81,19 +86,26 @@ export default function Landing({ onAuthed }: { onAuthed: () => void }) {
           </div>
           <div className="hero-card" aria-label="Пример результата">
             <span className="pill">пример</span>
-            <div className="doc">
-              <div className="doc-line w60 strong" />
-              <div className="doc-line w40" />
-              <div className="doc-sep" />
-              <div className="doc-line w90" /><div className="doc-line w80" /><div className="doc-line w85" />
-              <div className="doc-sep" />
-              <div className="doc-line w70" /><div className="doc-line w90" /><div className="doc-line w60" />
+            <div className="cv-mini">
+              <div className="cv-head">
+                <b className="cv-name">{t.card.name}</b>
+                <span className="cv-role">{t.card.role}</span>
+                <span className="cv-contacts">{t.card.contacts}</span>
+              </div>
+              <p className="cv-summary">{t.card.summary}</p>
+              {t.card.highlights.length > 0 && (
+                <div className="cv-highlights">
+                  {t.card.highlights.map((h, i) => <div key={i}><b>{h.value}</b><span>{h.label}</span></div>)}
+                </div>
+              )}
+              <div className="cv-job">{t.card.job}</div>
+              <ul className="cv-bullets">{lines(t.card.bullets).map((b, i) => <li key={i}>{b}</li>)}</ul>
             </div>
             <div className="hero-score">
-              <div className="score-ring"><span>9/10</span></div>
+              <div className="score-ring"><span>{t.card.score}</span></div>
               <div className="stack small-gap">
-                <b>Требования вакансии закрыты</b>
-                <span className="muted small">Видно, чего не хватает, и можно дописать опыт</span>
+                <b>{t.card.score_title}</b>
+                <span className="muted small">{t.card.score_note}</span>
               </div>
             </div>
           </div>
@@ -139,16 +151,23 @@ export default function Landing({ onAuthed }: { onAuthed: () => void }) {
         <div className="container">
           <h2 className="section-title">{f(t.example.title)}</h2>
           <p className="muted center-text">{f(t.example.subtitle)}</p>
-          <div className="compare">
-            <div className="compare-card before">
-              <span className="pill">было</span>
-              <p>{f(t.example.before)}</p>
+          {t.example.items.length > 1 && (
+            <div className="ex-tabs">
+              {t.example.items.map((x, i) => <button key={i} className={i === ex ? "on" : ""} onClick={() => setEx(i)}>{x.role}</button>)}
             </div>
-            <div className="compare-card after">
-              <span className="pill gold">стало</span>
-              <ul>{t.example.after.map((x, i) => <li key={i}>{f(x.text)}</li>)}</ul>
+          )}
+          {cur && (
+            <div className="compare" key={ex}>
+              <div className="compare-card before">
+                <span className="pill">было</span>
+                <p>{f(cur.before)}</p>
+              </div>
+              <div className="compare-card after">
+                <span className="pill gold">стало</span>
+                <ul>{lines(cur.after).map((x, i) => <li key={i}>{f(x)}</li>)}</ul>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </section>
 

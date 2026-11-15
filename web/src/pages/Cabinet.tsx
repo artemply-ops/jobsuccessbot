@@ -3,13 +3,27 @@ import { useEffect, useState } from "react";
 import { api, download } from "../api";
 
 type PkgRow = { id: number; target_id: number | null; title: string; company: string; version: number; items: string[];
-  created_at: string; coverage: number | null };
+  created_at: string; coverage: number | null; file_names?: Record<string, string> };
 type TargetRow = { id: number; title: string; company: string; general: boolean; created_at: string;
   coverage: number | null; package_id: number | null };
 
 const TITLES: Record<string, string> = { cv: "Резюме", one_page: "Одностраничник", letter: "Письмо" };
 const FILES: Record<string, string> = { cv: "Резюме", one_page: "Одностраничник", letter: "Сопроводительное_письмо" };
 const dt = (s: string) => new Date(s).toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" });
+
+// «Запустить заново»: мастер с развилки «быстро / под вакансию». Материалы и профиль на сервере остаются
+export function RestartCard() {
+  return (
+    <div className="card row between gap wrap restart-card">
+      <div className="stack small-gap">
+        <b>Новое резюме или другая вакансия</b>
+        <span className="muted small">Начнём с выбора пути. Ваши материалы и профиль уже сохранены, заново загружать не нужно.</span>
+      </div>
+      <button className="btn gold" onClick={() => { try { localStorage.removeItem("jp_make"); } catch { /* */ } window.location.href = "/make"; }}>
+        Запустить заново</button>
+    </div>
+  );
+}
 
 // Мастер восстанавливает шаг из localStorage (pages/Make.tsx, ключ jp_make): кладём туда нужный пакет и переходим
 function openInMaster(targetId: number, packageId: number | null, general: boolean) {
@@ -40,7 +54,7 @@ export function MyPackages() {
             {r.items.map((it) => (
               <button key={it} className="btn secondary" disabled={busy === `${r.id}${it}`} onClick={async () => {
                 setBusy(`${r.id}${it}`);
-                try { await download(`/packages/${r.id}/file/${it}`, `${FILES[it]}_v${r.version}.pdf`); }
+                try { await download(`/packages/${r.id}/file/${it}`, r.file_names?.[it] || `${FILES[it]}_v${r.version}.pdf`); }
                 catch (e: any) { setErr(e.message); } finally { setBusy(""); }
               }}>{busy === `${r.id}${it}` ? "…" : `${TITLES[it]} · PDF`}</button>
             ))}
