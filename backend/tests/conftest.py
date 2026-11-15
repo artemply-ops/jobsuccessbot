@@ -10,6 +10,7 @@ os.environ["LLM_ENABLED"] = "false"
 os.environ["ENV"] = "dev"
 os.environ["TELEGRAM_BOT_TOKEN"] = "123456:TEST"
 os.environ["STT_PROVIDER"] = "none"
+os.environ["BILLING_ENABLED"] = "false"  # старые тесты без лимитов; биллинг проверяет test_billing.py
 
 import pytest  # noqa: E402
 

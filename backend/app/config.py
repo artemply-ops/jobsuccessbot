@@ -54,6 +54,20 @@ class Settings(BaseSettings):
     # Код сохранён, включается SEARCH_ENABLED=true
     search_enabled: bool = False
 
+    # Биллинг (services/billing.py). false: все действия бесплатны, как до 15.11.2026
+    billing_enabled: bool = True
+    # ЮKassa: оплата на сайте и в PWA вне Telegram. Пусто: оплата картой выключена
+    yookassa_shop_id: str = ""
+    yookassa_secret_key: str = ""
+    # Telegram Stars: цифровые товары внутри Telegram продаются только за звёзды
+    stars_enabled: bool = False  # включить после проверки вывода звёзд и налогов (docs/ECONOMICS.md)
+    star_rub: float = 1.5  # рублей за звезду для пересчёта цен: звёзды = ceil(рубли / star_rub)
+    # Реквизиты для оферты и политики ПДн на сайте (ЮKassa требует их на сайте). Пусто: страницы помечены черновиком
+    legal_name: str = ""  # ФИО самозанятого или название ИП
+    legal_inn: str = ""
+    legal_status: str = ""  # «самозанятый (НПД)» или «ИП»
+    support_email: str = ""
+
     # Скоринг
     prefilter_top_n: int = 50
     notify_threshold: int = 75

@@ -29,7 +29,8 @@ export function setToken(t: string | null) {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  // data: машинные поля ответа, например { need: "package" } при 402 (нужна оплата)
+  constructor(public status: number, message: string, public data: any = null) {
     super(message);
   }
 }
@@ -50,13 +51,15 @@ export async function api<T = any>(path: string, opts: RequestInit & { json?: un
   }
   if (!r.ok) {
     let msg = `Ошибка ${r.status}`;
+    let data = null;
     try {
       const d = await r.json();
-      msg = typeof d.detail === "string" ? d.detail : msg;
+      if (typeof d.detail === "string") msg = d.detail;
+      else if (d.detail && typeof d.detail.message === "string") { msg = d.detail.message; data = d.detail; }
     } catch {
       /* не JSON */
     }
-    throw new ApiError(r.status, msg);
+    throw new ApiError(r.status, msg, data);
   }
   const ct = r.headers.get("content-type") || "";
   return (ct.includes("application/json") ? r.json() : r.blob()) as Promise<T>;

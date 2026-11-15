@@ -219,3 +219,12 @@ ol { margin: 4px 0; padding-left: 20px; }
 .fork-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .fork-body b { font-size: 16px; }
 .fork-go { flex: none; color: var(--accent); font-size: 20px; }
+
+/* Тарифы и лендинг (15.11.2026): простая сетка, дизайн накатим позже */
+.plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.plan { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--line, #ddd); border-radius: 12px; }
+.plan.accent { border-color: var(--accent, #2f6fed); }
+.plan-price { font-size: 1.3em; font-weight: 700; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.landing h1 { font-size: 1.6em; line-height: 1.25; }
+.legal h2 { font-size: 1.05em; margin-top: 8px; }

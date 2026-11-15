@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api, inTelegram, login, setToken } from "./api";
 import ProfilePage from "./pages/Profile";
 import MakePage from "./pages/Make";
+import Landing from "./pages/Landing";
+import { Offer, Privacy } from "./pages/Legal";
+import { PayReturn } from "./pages/Billing";
+
+// Страницы без входа: юридические тексты нужны ЮKassa и пользователю до оплаты
+const PUBLIC: Record<string, React.ComponentType> = { "/offer": Offer, "/privacy": Privacy };
 
 export type Me = {
   id: number;
@@ -39,8 +45,13 @@ export default function App() {
     return () => window.removeEventListener("jp-logout", onLogout);
   }, [loadMe]);
 
+  const { pathname } = useLocation();
+  const Pub = PUBLIC[pathname];
+  if (Pub) return <div className="content"><Pub /><p><a href="/">← JobPilot</a></p></div>;
   if (state === "loading") return <div className="center muted">Загрузка…</div>;
-  if (state === "anon") return <Login onDone={loadMe} error={error} />;
+  if (state === "anon") return inTelegram()
+    ? <Login onDone={loadMe} error={error} />
+    : <div className="content"><Landing login={<Login onDone={loadMe} error={error} compact />} /></div>;
   if (me && !me.consent) return <Consent onDone={loadMe} />;
 
   return (
@@ -56,6 +67,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/make" replace />} />
           <Route path="/make" element={<MakePage />} />
           <Route path="/profile" element={<ProfilePage me={me!} onMeChange={loadMe} />} />
+          <Route path="/pay/return" element={<PayReturn />} />
           <Route path="*" element={<Navigate to="/make" replace />} />
         </Routes>
       </main>
@@ -68,7 +80,7 @@ export default function App() {
   );
 }
 
-function Login({ onDone, error }: { onDone: () => void; error: string }) {
+function Login({ onDone, error, compact }: { onDone: () => void; error: string; compact?: boolean }) {
   const [cfg, setCfg] = useState<{ bot_username: string; dev_login: boolean } | null>(null);
   const [err, setErr] = useState(error);
   const widgetRef = useRef<HTMLDivElement>(null);
@@ -106,10 +118,10 @@ function Login({ onDone, error }: { onDone: () => void; error: string }) {
   };
 
   return (
-    <div className="center stack narrow">
-      <img src="/icon.svg" width={64} height={64} alt="" />
-      <h1>JobPilot</h1>
-      <p className="muted">Резюме, резюме на одну страницу и сопроводительное письмо под конкретную вакансию.</p>
+    <div className={compact ? "stack" : "center stack narrow"}>
+      {!compact && <img src="/icon.svg" width={64} height={64} alt="" />}
+      {!compact && <h1>JobPilot</h1>}
+      {!compact && <p className="muted">Резюме, резюме на одну страницу и сопроводительное письмо под конкретную вакансию.</p>}
       <div ref={widgetRef} />
       {cfg && !cfg.bot_username && !cfg.dev_login && <p className="muted">Вход через Telegram ещё не настроен.</p>}
       {cfg?.dev_login && <button className="btn secondary" onClick={dev}>Войти (локальная разработка)</button>}

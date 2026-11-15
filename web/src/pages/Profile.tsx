@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getConfig, upload, waitJob, type Cfg } from "../api";
 import type { Me } from "../App";
+import { PlanCard } from "./Billing";
 
 type Source = { id: number; kind: string; filename: string | null; status: string; error: string | null; preview: string };
 type Skill = { name: string; level: string; years: number | null; source_ids: number[] };
@@ -77,6 +78,7 @@ export default function ProfilePage({ me, onMeChange }: { me: Me; onMeChange: ()
 
   return (
     <div className="stack">
+      <PlanCard />
       {busy && <div className="banner">{busy}</div>}
       {err && <div className="banner error">{err}</div>}
 

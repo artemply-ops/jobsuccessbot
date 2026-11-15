@@ -3,6 +3,7 @@
 // target: под конкретную вакансию. Материалы -> вакансия -> уточнения -> документы -> схема -> фото -> файлы + покрытие.
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, download, getConfig, inTelegram, upload, waitJob, type Cfg } from "../api";
+import { Paywall } from "./Billing";
 import { VoiceRecorder } from "./Profile";
 
 type Mode = "quick" | "target";
@@ -18,7 +19,7 @@ type Flag = { text: string; where: string; reason: string };
 type Req = { requirement: string; status: "covered" | "partial" | "missing"; evidence: string; in_profile: boolean; question: string };
 type Cov = { requirements: Req[]; req_covered: number; req_partial: number; req_total: number;
   keywords_covered: string[]; keywords_missing: string[]; kw_total: number; score: number };
-type Pkg = { id: number; version: number; items: string[]; scheme: string; flags: Flag[]; revision_left: boolean;
+type Pkg = { id: number; version: number; items: string[]; scheme: string; flags: Flag[]; revision_left: boolean; revision_price: number;
   improve_left: number; coverage: Cov | null; coverage_before: Cov | null };
 type ReviewRes = { score: number; checks: { key: string; title: string; ok: boolean; note: string }[];
   advice: { problem: string; fix: string }[] };
@@ -50,6 +51,7 @@ export default function MakePage() {
   const [role, setRole] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [paywall, setPaywall] = useState<string | null>(null);  // лимит закончился: что именно (package | revision)
   const [ai, setAi] = useState(true);
   const quick = mode === "quick";
   const itemList = quick ? ITEMS.filter(([k]) => k !== "letter") : ITEMS;  // без вакансии письмо писать не о чем
@@ -80,10 +82,12 @@ export default function MakePage() {
   const run = async (stages: string | string[], fn: () => Promise<void>, est?: number) => {
     setBusy((Array.isArray(stages) ? stages.join("|") : stages) + (est ? `#${est}` : ""));
     setError("");
+    setPaywall(null);
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof ApiError || e instanceof Error ? e.message : "Ошибка");
+      if (e instanceof ApiError && e.status === 402) setPaywall(e.data?.need || "package");
+      else setError(e instanceof ApiError || e instanceof Error ? e.message : "Ошибка");
     } finally {
       setBusy("");
     }
@@ -94,6 +98,7 @@ export default function MakePage() {
       {step !== "start" && <Progress step={step} mode={mode} />}
       {!ai && step !== "start" && <div className="banner">ИИ пока не подключён: материалы и вакансия сохранятся, документы соберём после подключения.</div>}
       {error && !busy && <div className="banner error">{error}</div>}
+      {paywall && !busy && <Paywall need={paywall} onClose={() => setPaywall(null)} />}
       {busy && <Working key={busy} stages={busy.split("#")[0].split("|")} est={Number(busy.split("#")[1]) || undefined} />}
 
       {/* На время обработки форма шага скрыта, но не размонтирована: при ошибке введённое на месте */}
@@ -585,6 +590,14 @@ function Result(props: {
       </div>
     );
   }
+  if (!pkg && !packageId && !busy) {  // сборка не началась или упала (например, нужен тариф): даём повторить
+    return (
+      <div className="card stack">
+        <p>Документы ещё не собраны.</p>
+        <button className="btn" onClick={() => generate()}>Собрать документы</button>
+      </div>
+    );
+  }
   if (!pkg) return busy ? null : <Working stages={["Загружаю документы"]} />;
   const cvFlags = pkg.flags.filter((f) => f.where === "cv");
   const letterFlags = pkg.flags.filter((f) => f.where !== "cv");
@@ -650,9 +663,11 @@ function Result(props: {
           }, 45)} />
       )}
 
-      {pkg.revision_left && (
+      {(
         <div className="card stack">
-          <h2>Одна правка</h2>
+          <h2>Правка</h2>
+          <p className="muted small">{pkg.revision_left ? "Правка входит в ваш лимит." : `Бесплатная правка уже использована: следующая ${pkg.revision_price} ₽ или по тарифу.`}
+            {" "}Опишите все правки одним сообщением.</p>
           <textarea rows={3} value={instruction} onChange={(e) => setInstruction(e.target.value)}
             placeholder="Например: короче summary, акцент на B2B, письмо менее формально" />
           <button className="btn" disabled={!instruction.trim() || !!busy} onClick={() => generate(instruction.trim())}>Внести правку</button>

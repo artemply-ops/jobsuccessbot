@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Package, Target, User, Vacancy
 from app.schemas import CV, PACKAGE_ITEMS, FactCheck, TailoredBoth, TailoredCV, TailoredLetter
-from app.services import intake, llm, package
+from app.services import billing, intake, llm, package
 from app.services.cv_render import SCHEMES
 from app.services.profile import latest_profile, profile_to_text
 
@@ -142,12 +142,20 @@ MAX_IMPROVE = 2  # перегенераций по покрытию на одн�
 
 
 async def revisions(session: AsyncSession, user_id: int, target_id: int) -> tuple[bool, int]:
-    """(использована ли ручная правка, сколько перегенераций по покрытию осталось)."""
+    """(была ли ручная правка, сколько перегенераций по покрытию осталось).
+    Лимит ручных правок с 15.11.2026 считает биллинг (services/billing.py), а не этот счётчик."""
     rows = (await session.execute(select(Package.instruction).where(Package.user_id == user_id,
                                                                     Package.target_id == target_id))).scalars().all()
     manual = any(i and not i.startswith(AUTO) for i in rows)
     auto = sum(1 for i in rows if i and i.startswith(AUTO))
     return manual, max(0, MAX_IMPROVE - auto)
+
+
+def billing_action(instruction: str | None, auto: bool = False) -> str | None:
+    """Что списывать: новый пакет, ручная правка или ничего (перегенерация по покрытию входит в пакет)."""
+    if auto:
+        return None
+    return "revision" if instruction else "package"
 
 
 async def build(session: AsyncSession, user: User, target: Target, items: list[str], scheme: str = "graphite",
@@ -166,11 +174,11 @@ async def build(session: AsyncSession, user: User, target: Target, items: list[s
     prev = await _prev(session, user.id, target.id)
     if instruction and prev is None:
         raise PackageError("Правка возможна после первой версии пакета.")
-    manual_used, improve_left = await revisions(session, user.id, target.id)
-    if instruction and not auto and manual_used:
-        raise PackageError("Правка уже использована. Можно поменять цветовую схему или собрать пакет заново.")
+    _, improve_left = await revisions(session, user.id, target.id)
     if auto and improve_left <= 0:
         raise PackageError("Перегенерация по покрытию уже использована дважды для этой вакансии.")
+    action = billing_action(instruction, auto)
+    await billing.require(session, user, action)  # до вызова модели: без лимита не тратим токены
 
     vacancy = await session.get(Vacancy, target.vacancy_id)
     profile_text = profile_to_text(prof.data)
@@ -227,4 +235,6 @@ async def build(session: AsyncSession, user: User, target: Target, items: list[s
             log.warning("coverage after: target=%s %s", target.id, e)
     session.add(pkg)
     await session.flush()
+    # списание в той же транзакции: если дальше что-то упадёт, откатится вместе с пакетом
+    await billing.consume(session, user, action, target_id=target.id, package_id=pkg.id)
     return pkg

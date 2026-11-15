@@ -11,6 +11,9 @@ MVP: блок 1 (профиль кандидата), блок 2 (поиск и �
 - `backend/app/api/routes.py` HTTP API, `backend/app/bot/__main__.py` бот, `backend/app/jobs.py` фоновые задачи
 - `web/` PWA (Vite + React + TS), собирается в `web/dist`, раздаётся бэкендом
 - `data/companies_seed.yaml` посевной каталог компаний
+- `services/billing.py` цены, лимиты, промокоды (единственное место цен), `services/payments.py` ЮKassa и Stars,
+  `api/billing_routes.py`, `bot/billing_flow.py`, `web/src/pages/Billing.tsx`, лендинг `Landing.tsx`, оферта `Legal.tsx`
+- `docs/ARCHITECTURE.md` где что менять, `docs/ECONOMICS.md` цены, себестоимость, маржа (цель выше 60%)
 
 ## Жёсткие правила
 - Во внешнюю LLM только обезличенный текст. Любой новый вызов LLM идёт через `services/llm.structured`, где стоит страховка `has_pii`.
@@ -18,6 +21,9 @@ MVP: блок 1 (профиль кандидата), блок 2 (поиск и �
 - Голос это ПДн: распознавание только через Yandex SpeechKit (РФ).
 - Источники вакансий только легальные. Реестр в `services/sources/base.py`. hh.ru не парсим. robots.txt соблюдаем.
 - Контакты рекрутеров из вакансий не храним (см. `collect._clean`, `trudvsem.parse`).
+- Платные действия списываются только в `services/tailor.build` через `billing.require` / `billing.consume`; каналы
+  заранее вызывают `billing.require` и показывают оплату. Внутри Telegram цифровые товары только за Stars.
+- Учёт токенов: `llm.track(user_id, action)` в точке входа нового сценария, иначе расход не привяжется к действию.
 - В CV нельзя выдуманных фактов: проверка фактов (`SYSTEM_FACTCHECK`) обязательна для каждого пакета.
 
 ## Сервер
@@ -27,7 +33,8 @@ SSH: `ssh -i ~/.ssh/id_ed25519_tihoeslovo_deploy deploy@201.24.55.219`. Соед
 - Код: `/opt/jobsuccessbot`, секреты в `/opt/jobsuccessbot/.env` (только на сервере, chmod 600)
 - Стек: `docker compose -f docker-compose.server.yml -p jobsuccess ...` (db, app, caddy)
 - app = API + PWA + бот в одном процессе (RUN_BOT_IN_API=true), планировщик внутри (RUN_SCHEDULER=true)
-- HTTPS: Caddy, домен `201-24-55-219.sslip.io` (временный, заменить на свой)
+- HTTPS: Caddy, домен `201-24-55-219.sslip.io`; свой домен job-pilot.ru (15.11.2026 владелец покупает).
+  Переключение после A-записей: `bash scripts/set_domain.sh job-pilot.ru`, затем `/setdomain` у BotFather
 - Telegram и OpenRouter из РФ через прокси `PROXY_URL` / `LLM_PROXY_URL` (тот же, что у «Тихого слова», выход DE).
   OpenRouter с российского IP отдаёт 403. Прокси нужен с DNS на его стороне (socks5h), адаптер переводит сам
 - Бот: @job_success_bot. Админ: tg 52622104

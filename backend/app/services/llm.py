@@ -7,9 +7,12 @@
 - модель меняется в .env (LLM_MODEL_MAIN / LLM_MODEL_SCORING) без правки кода.
 """
 
+import asyncio
+import contextvars
 import copy
 import json
 import logging
+import uuid
 from typing import TypeVar
 
 import httpx
@@ -35,6 +38,57 @@ class AINotConnected(LLMError):
 
     def __init__(self, what: str = "Этот шаг"):
         super().__init__(f"{what} работает на ИИ, а ИИ пока не подключён.")
+
+
+# ---------- Учёт токенов ----------
+# Кто и в рамках какого действия зовёт модель. Ставится в точке входа: API (auth.current_user), фоновая задача
+# (jobs.enqueue), бот (cv_flow). Одно действие пользователя = один run: по нему считается цена пакета и правки.
+_track: contextvars.ContextVar[dict] = contextvars.ContextVar("llm_track", default={})
+_writes: set[asyncio.Task] = set()
+
+
+def track(user_id: int | None = None, action: str | None = None, run: str | None = None) -> None:
+    cur = _track.get()
+    _track.set({"user_id": user_id if user_id is not None else cur.get("user_id"),
+                "action": action or cur.get("action"),
+                "run": run or (uuid.uuid4().hex[:16] if action else cur.get("run"))})
+
+
+def _usage_row(step: str, model: str, usage: dict):
+    from app.models import LlmUsage
+
+    t = _track.get()
+    details = usage.get("completion_tokens_details") or {}
+    return LlmUsage(user_id=t.get("user_id"), action=t.get("action"), run=t.get("run"), step=step[:64],
+                    model=model[:128], prompt_tokens=int(usage.get("prompt_tokens") or 0),
+                    completion_tokens=int(usage.get("completion_tokens") or 0),
+                    reasoning_tokens=int(details.get("reasoning_tokens") or 0),
+                    cost_usd=float(usage.get("cost") or 0.0))
+
+
+async def _save_usage(row) -> None:
+    try:
+        from app.db import SessionLocal
+
+        async with SessionLocal() as s:
+            s.add(row)
+            await s.commit()
+    except Exception as e:  # учёт не должен ломать генерацию
+        log.warning("llm usage not saved: %s", type(e).__name__)
+
+
+def _record(step: str, model: str, usage: dict | None) -> None:
+    if not usage:
+        return
+    t = asyncio.create_task(_save_usage(_usage_row(step, model, usage)))  # своя сессия: не ждём и не мешаем основной
+    _writes.add(t)
+    t.add_done_callback(_writes.discard)
+
+
+async def drain_usage() -> None:
+    """Дождаться записи учёта (тесты, завершение процесса)."""
+    if _writes:
+        await asyncio.gather(*list(_writes), return_exceptions=True)
 
 
 def available() -> bool:
@@ -122,6 +176,7 @@ async def structured(
                             "json_schema": {"name": schema.__name__, "strict": True, "schema": strict_schema(schema)}},
         "provider": {"require_parameters": True},
         "reasoning": {"effort": effort},
+        "usage": {"include": True},  # OpenRouter вернёт токены и стоимость: пишем в llm_usage
     }
     last_err: Exception | None = None
     for attempt in range(2):  # одна повторная попытка, если модель нарушила схему
@@ -143,6 +198,7 @@ async def structured(
         if "error" in data:
             log.error("LLM API error: %s", str(data["error"])[:500])
             raise LLMError("Ошибка LLM API")
+        _record(schema.__name__, body["model"], data.get("usage"))  # платим и за ответ не по схеме: учитываем все
         choice = data["choices"][0]
         if choice.get("finish_reason") == "length":
             raise LLMError("Ответ модели обрезан по лимиту токенов")

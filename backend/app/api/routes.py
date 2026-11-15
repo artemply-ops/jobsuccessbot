@@ -14,7 +14,8 @@ from app.db import get_session
 from app.models import (Company, CompanyScore, CompanySubscription, Contact, Job, Package, Source, Target, User,
                         Vacancy, VacancyScore)
 from app.schemas import ProfileData
-from app.services import collect, cv_render, export, intake, llm, profile, tailor
+from app.api.billing_routes import payment_required
+from app.services import billing, collect, cv_render, export, intake, llm, profile, tailor
 from app.services.stt import STTError, transcribe_any
 from app.services.stt import available as stt_available
 
@@ -485,6 +486,7 @@ async def review_resume(user: User = Depends(current_user), session: AsyncSessio
     from app.services import review
 
     _need_consent(user)
+    llm.track(action="review")
     rows = (await session.execute(select(Source).where(Source.user_id == user.id, Source.status == "parsed")
                                   .order_by(Source.id.desc()))).scalars().all()
     files = [s for s in rows if s.kind == "file"]
@@ -511,7 +513,13 @@ async def target_package(target_id: int, body: TailorIn, user: User = Depends(cu
         raise HTTPException(400, str(e))
     if body.scheme not in cv_render.SCHEMES:
         raise HTTPException(400, "Неизвестная цветовая схема")
-    return {"job_id": await jobs.enqueue("tailor", user.id,
+    action = tailor.billing_action(body.instruction)
+    try:  # заранее: без лимита сразу экран оплаты, а не ошибка после минуты ожидания
+        await billing.require(session, user, action)
+    except billing.PaymentRequired as e:
+        raise payment_required(e)
+    await session.commit()  # мог создаться бесплатный грант
+    return {"job_id": await jobs.enqueue(action, user.id,
                                          jobs.tailor_job(user.id, t.id, items, body.scheme, body.instruction))}
 
 
@@ -558,11 +566,14 @@ async def get_package(package_id: int, user: User = Depends(current_user),
     contact = await session.get(Contact, user.id)
     if pkg.items:  # пакет этапа 3: выбранные документы и шаблон
         view = export.tailored_view(pkg, contact, drop_flagged=False)
-        manual_used, improve_left = await tailor.revisions(session, user.id, pkg.target_id)
+        _, improve_left = await tailor.revisions(session, user.id, pkg.target_id)
         target = await session.get(Target, pkg.target_id) if pkg.target_id else None
+        revision_left = await billing.can(session, user, "revision")
+        await session.commit()  # мог создаться бесплатный грант
         return {"id": pkg.id, "target_id": pkg.target_id, "version": pkg.version, "items": pkg.items,
                 "scheme": pkg.scheme, "flags": pkg.fact_flags, "instruction": pkg.instruction,
-                "revision_left": not manual_used, "improve_left": improve_left, "coverage": pkg.coverage,
+                "revision_left": revision_left, "revision_price": billing.PRODUCTS["revision"].price_rub,
+                "improve_left": improve_left, "coverage": pkg.coverage,
                 "coverage_before": target.coverage if target else None, **view}
     view = export.cv_view(pkg, contact, drop_flagged=False)
     return {"id": pkg.id, "vacancy_id": pkg.vacancy_id, "version": pkg.version, "flags": pkg.fact_flags,

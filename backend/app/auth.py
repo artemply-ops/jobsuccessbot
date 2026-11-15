@@ -84,4 +84,7 @@ async def current_user(request: Request, session: AsyncSession = Depends(get_ses
     user = await session.get(User, int(payload["sub"]))
     if user is None:
         raise HTTPException(401, "Пользователь не найден")
+    from app.services import llm
+
+    llm.track(user_id=user.id)  # учёт токенов: чей запрос
     return user

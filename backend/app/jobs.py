@@ -32,6 +32,9 @@ async def enqueue(kind: str, user_id: int | None, fn: JobFn) -> int:
         job_id = job.id
 
     async def runner():
+        from app.services import llm
+
+        llm.track(user_id, kind, run=f"job{job_id}")  # учёт токенов: вся задача это одно действие
         async with SessionLocal() as s:
             j = await s.get(Job, job_id)
             j.status = "running"

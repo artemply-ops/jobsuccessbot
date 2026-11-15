@@ -113,8 +113,9 @@ async def test_build_package_choice_flags_and_one_revision(session, monkeypatch)
 
         rev = await tailor.build(session, user, target, ["cv"], instruction="Короче summary")
         assert rev.instruction and rev.version == pkg.version + 1
-        with pytest.raises(tailor.PackageError, match="уже использована"):
-            await tailor.build(session, user, target, ["cv"], instruction="Ещё правка")
+        # с 15.11.2026 число правок ограничивает биллинг (test_billing.py), без него вторая правка проходит
+        rev2 = await tailor.build(session, user, target, ["cv"], instruction="Ещё правка")
+        assert rev2.version == rev.version + 1
     finally:
         monkeypatch.setattr(llm, "_client", None)
 

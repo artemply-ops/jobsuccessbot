@@ -502,6 +502,13 @@ async def generate(message: Message, state: FSMContext, tg_user, instruction: st
         await message.answer("🤖 <i>Генерация резюме работает на ИИ, а ИИ пока не подключён.</i>")
         return
     user = await _user(tg_user)
+    from app.bot.billing_flow import check_or_paywall
+    from app.services.tailor import billing_action
+
+    action = billing_action(instruction)
+    if not await check_or_paywall(message, user, action):  # лимит закончился: оплата или промокод
+        return
+    llm.track(user.id, action)
     try:
         async with working(message, STAGES_TAILOR, every=4.0):
             res = await _run(tailor_job(user.id, data["target_id"], data.get("items") or list(PACKAGE_ITEMS),
@@ -549,19 +556,23 @@ async def send_files(message: Message, package_id: int, accept_flags: bool = Fal
             f"• {html.escape(f['text'])} — {html.escape(f['reason'])}" for f in letter_flags)
             + "\n\nЕсли это правда, подтвердите, и я пришлю письмо. Если нет, внесите правку.")
         kb.append([InlineKeyboardButton(text="Это правда, прислать письмо", callback_data=f"cva:{pkg.id}")])
+    from app.services import billing
     from app.services.tailor import revisions
 
     async with SessionLocal() as s:
         target = await s.get(Target, pkg.target_id) if pkg.target_id else None
-        manual_used, improve_left = await revisions(s, pkg.user_id, pkg.target_id) if pkg.target_id else (True, 0)
+        _, improve_left = await revisions(s, pkg.user_id, pkg.target_id) if pkg.target_id else (True, 0)
+        revision_free = await billing.can(s, await s.get(User, pkg.user_id), "revision")
+        await s.commit()
     if pkg.coverage:  # проверка после генерации и предложение перегенерировать
         await message.answer(coverage_text(pkg.coverage, target.coverage if target else None))
         if improve_left > 0:
             kb.append([InlineKeyboardButton(text="🔁 Перегенерировать с учётом пробелов", callback_data=f"cvi2:{pkg.id}")])
             if any(r["status"] != "covered" and not r["in_profile"] for r in pkg.coverage.get("requirements", [])):
                 kb.append([InlineKeyboardButton(text="✍️ Добавить факты и перегенерировать", callback_data=f"cvf:{pkg.id}")])
-    if not manual_used:
-        kb.append([InlineKeyboardButton(text="✏️ Внести правку (одна)", callback_data=f"cvr:{pkg.id}")])
+    if pkg.target_id:
+        price = "" if revision_free else f" · {billing.PRODUCTS['revision'].price_stars} ⭐"
+        kb.append([InlineKeyboardButton(text=f"✏️ Внести правку{price}", callback_data=f"cvr:{pkg.id}")])
     kb.append([InlineKeyboardButton(text="🎨 Другая цветовая схема", callback_data=f"cvc:{pkg.id}")])
     kb.append([InlineKeyboardButton(text="Новая вакансия", callback_data="cv:new")])
     await message.answer("Готово. Что дальше?", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
@@ -627,6 +638,7 @@ async def run_improve(message: Message, state: FSMContext, tg_user, package_id: 
         await message.answer("🤖 <i>Перегенерация работает на ИИ, а ИИ пока не подключён.</i>")
         return
     user = await _user(tg_user)
+    llm.track(user.id, "improve")
     stages = (["Добавляю ваши факты в профиль"] if facts else []) + ["Закрываю пробелы", "Проверяю каждый факт",
                                                                      "Считаю покрытие", "Собираю PDF"]
     try:
@@ -649,6 +661,7 @@ async def check_resume(message: Message):
     from app.services import review
 
     user = await _user(message.from_user)
+    llm.track(user.id, "review")
     async with SessionLocal() as s:
         rows = (await s.execute(select(Source).where(Source.user_id == user.id, Source.status == "parsed")
                                 .order_by(Source.id.desc()))).scalars().all()
@@ -699,9 +712,13 @@ async def on_revise(cb: CallbackQuery, state: FSMContext):
     pkg = await _own(cb, int(cb.data.split(":")[1]))
     if not pkg:
         return
+    from app.bot.billing_flow import check_or_paywall
+
+    if not await check_or_paywall(cb.message, await _user(cb.from_user), "revision"):
+        return
     await state.update_data(package_id=pkg.id, target_id=pkg.target_id, items=pkg.items, scheme=pkg.scheme)
     await state.set_state(CV.revise)
-    await cb.message.answer("Напишите или наговорите, что поправить. Правка одна, поэтому лучше всё сразу. "
+    await cb.message.answer("Напишите или наговорите, что поправить. Опишите все правки одним сообщением. "
                             "Например: «короче summary, акцент на B2B, письмо менее формально».")
 
 

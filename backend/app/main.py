@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.billing_routes import router as billing_router
 from app.api.routes import api
 from app.config import get_settings
 from app.db import init_db
@@ -47,6 +48,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="JobPilot", lifespan=lifespan)
 app.include_router(api)
+app.include_router(billing_router)
 
 
 @app.exception_handler(Exception)

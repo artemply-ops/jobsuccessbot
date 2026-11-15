@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Переключить сервис на свой домен. Запуск из корня проекта: bash scripts/set_domain.sh job-pilot.ru
+# Перед запуском у регистратора должны быть A-записи домена и www на 201.24.55.219 (проверка ниже).
+# Старый адрес sslip.io остаётся рабочим. После запуска: /setdomain у @BotFather на этот домен (вход на сайте).
+set -euo pipefail
+D="${1:?укажите домен, например job-pilot.ru}"
+IP=201.24.55.219
+for h in "$D" "www.$D"; do
+  got=$(nslookup "$h" 8.8.8.8 2>/dev/null | awk '/^Address/ {a=$2} END {print a}')
+  [ "$got" = "$IP" ] || { echo "$h указывает на '${got:-ничего}', нужно $IP. Проверьте DNS и повторите позже"; exit 1; }
+done
+SSH_KEY="$HOME/.ssh/id_ed25519_tihoeslovo_deploy"
+for i in $(seq 1 20); do
+  set +e
+  ssh -o ConnectTimeout=15 -i "$SSH_KEY" deploy@$IP "bash -s" <<EOS
+set -e
+cd /opt/jobsuccessbot
+setv() { if grep -q "^\$1=" .env; then sed -i "s|^\$1=.*|\$1=\$2|" .env; else echo "\$1=\$2" >> .env; fi; }
+setv DOMAIN '"$D, www.$D, 201-24-55-219.sslip.io"'
+setv PUBLIC_URL "https://$D"
+C="docker compose -f docker-compose.server.yml -p jobsuccess"
+\$C up -d caddy app
+echo "готово: DOMAIN и PUBLIC_URL обновлены, caddy и app перезапущены"
+EOS
+  rc=$?; set -e
+  [ $rc -ne 255 ] && exit $rc
+  sleep 8
+done

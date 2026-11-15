@@ -19,7 +19,7 @@ from aiogram.types import (BotCommand, BufferedInputFile, CallbackQuery, ErrorEv
 from sqlalchemy import func, select
 
 from app.auth import upsert_tg_user
-from app.bot import cv_flow
+from app.bot import billing_flow, cv_flow
 from app.config import get_settings
 from app.db import SessionLocal, init_db
 from app.jobs import build_profile_job, package_job, search_job
@@ -32,6 +32,7 @@ from app.tg import make_bot
 log = logging.getLogger("bot")
 dp = Dispatcher()
 dp.include_router(cv_flow.router)
+dp.include_router(billing_flow.router)
 MAX_FILE = 15 * 1024 * 1024
 
 
@@ -51,15 +52,17 @@ HELP = (
     "1. Пришлите резюме: файл, скан или фото. Можно добавить рассказ о себе текстом или голосом.\n"
     "2. Пришлите вакансию: ссылку на сайт компании или текст.\n"
     "3. Ответьте на 2-3 уточнения, выберите документы, цветовую схему и фото.\n"
-    "4. Получите резюме, резюме на одну страницу и письмо в одном стиле. Одна правка входит в пакет.\n\n"
-    "/start начать заново · /new новая вакансия · /check проверить резюме · /contacts ФИО и контакты"
+    "4. Получите резюме, резюме на одну страницу и письмо в одном стиле.\n\n"
+    "Первый пакет и одна правка бесплатно, дальше по тарифу: /plan. Проверка резюме бесплатна всегда.\n\n"
+    "/start начать заново · /new новая вакансия · /check проверить резюме · /contacts ФИО и контакты · "
+    "/plan тариф · /promo промокод"
 )
 STUB = "🤖 <i>{what} работает на ИИ, а ИИ пока не подключён.</i>"
 BASIC_ASK = ("Чтобы уже сейчас искать вакансии, напишите одной строкой должность и город, можно ещё зарплату "
              "и формат. Например:\n<code>Python-разработчик, Москва, 250000, удалёнка</code>")
 # Пивот 08.11: в меню только сценарий резюме. /search, /vacancies, /companies, /profile работают, но скрыты
 COMMANDS = [("start", "Сделать резюме"), ("new", "Новая вакансия"), ("check", "Проверить резюме"),
-            ("contacts", "Контакты для резюме"),
+            ("contacts", "Контакты для резюме"), ("plan", "Тариф и оплата"), ("promo", "Ввести промокод"),
             ("help", "Помощь")]
 
 
@@ -77,7 +80,8 @@ async def get_user(msg_from) -> User:
     async with SessionLocal() as s:
         u = await upsert_tg_user(s, msg_from.id, msg_from.username, msg_from.first_name)
         await s.commit()
-        return u
+    llm.track(user_id=u.id)  # учёт токенов: чей запрос
+    return u
 
 
 async def need_consent(message: Message, user: User) -> bool:
@@ -263,6 +267,9 @@ async def on_basic(message: Message, state: FSMContext):
 async def on_text(message: Message, state: FSMContext):
     user = await get_user(message.from_user)
     if await need_consent(message, user):
+        return
+    if await state.get_state() == billing_flow.Promo.code.state:
+        await billing_flow.promo_take(message, state)
         return
     if await cv_flow.handle_text(message, state, message.text):
         return

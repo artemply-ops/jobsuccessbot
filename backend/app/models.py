@@ -186,6 +186,87 @@ class Package(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class LlmUsage(Base):
+    """Учёт токенов: только числа, текст запросов не хранится (см. llm.structured)."""
+
+    __tablename__ = "llm_usage"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    action: Mapped[str | None] = mapped_column(String(32))  # tailor | improve | profile | review | ... (llm.track)
+    run: Mapped[str | None] = mapped_column(String(40), index=True)  # одно действие пользователя = один run
+    step: Mapped[str] = mapped_column(String(64))  # имя схемы ответа: TailoredBoth, FactCheck, ...
+    model: Mapped[str] = mapped_column(String(128))
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    reasoning_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+
+
+class Grant(Base):
+    """Лимиты пользователя: бесплатный старт, покупка, тариф, промокод (services/billing.py)."""
+
+    __tablename__ = "grants"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    sku: Mapped[str] = mapped_column(String(32))  # free | revision | package | week | month | ...
+    quota: Mapped[dict] = mapped_column(JSON)  # {"package": 6, "revision": 15}
+    source: Mapped[str] = mapped_column(String(16))  # free | payment | promo | admin
+    ref: Mapped[str | None] = mapped_column(String(64))  # id платежа или промокода
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # None: бессрочно
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class BillingUsage(Base):
+    """Одно платное действие: пакет или правка. grant_id None: администратор, без списания."""
+
+    __tablename__ = "billing_usage"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    grant_id: Mapped[int | None] = mapped_column(ForeignKey("grants.id"), index=True)
+    action: Mapped[str] = mapped_column(String(16))  # package | revision
+    target_id: Mapped[int | None] = mapped_column(Integer)
+    package_id: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(16))  # yookassa | stars
+    sku: Mapped[str] = mapped_column(String(32))
+    amount: Mapped[int] = mapped_column(Integer)  # рубли для RUB, звёзды для XTR
+    currency: Mapped[str] = mapped_column(String(8))  # RUB | XTR
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending | succeeded | canceled
+    external_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    grant_id: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PromoCode(Base):
+    __tablename__ = "promo_codes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    sku: Mapped[str] = mapped_column(String(32))  # продукт из billing.PRODUCTS
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)
+    used: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    note: Mapped[str | None] = mapped_column(String(256))
+    created_by: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class PromoRedemption(Base):
+    __tablename__ = "promo_redemptions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code_id: Mapped[int] = mapped_column(ForeignKey("promo_codes.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (UniqueConstraint("code_id", "user_id"),)
+
+
 class Job(Base):
     """Фоновая задача: сбор вакансий, скоринг, генерация."""
 
