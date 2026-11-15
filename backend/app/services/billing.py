@@ -39,7 +39,7 @@ PRODUCTS: dict[str, Product] = {p.sku: p for p in [
     Product("revision", "Правка", "Одна правка готового пакета", 29, {"revision": 1}),
     Product("package", "Пакет", "Резюме, резюме на 1 страницу и письмо под одну вакансию", 59, {"package": 1}),
     Product("week", "Неделя", "6 пакетов и 15 правок на 7 дней", 249, {"package": 6, "revision": 15}, 7),
-    Product("month", "Месяц", "20 пакетов и 45 правок на 30 дней", 690, {"package": 20, "revision": 45}, 30),
+    Product("month", "Месяц", "20 пакетов и 40 правок на 30 дней", 690, {"package": 20, "revision": 40}, 30),
 ]}
 FREE = {"package": 1, "revision": 1}  # бесплатный старт: первая генерация и одна правка
 PROMO_ONLY: dict[str, Product] = {  # только по промокоду: для своих и тестов

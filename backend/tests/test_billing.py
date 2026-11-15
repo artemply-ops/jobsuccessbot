@@ -25,7 +25,7 @@ async def _user(session, tg_id: int) -> User:
 
 def test_prices_margin_above_60_percent():
     """Цель владельца 15.11.2026: маржа выше 60% при ожидаемом расходе (docs/ECONOMICS.md)."""
-    fees = 0.083  # эквайринг ~4,27% + НПД 4%
+    fees = 0.103  # эквайринг ~4,27% + УСН 6% (владелец ИП, 15.11.2026)
     cost = {"revision": 4.2, "package": 11.6}  # ₽, живой прогон 14.11 при курсе 100 и комиссии OpenRouter
     for p in billing.PRODUCTS.values():
         expected = sum(cost[a] * n for a, n in p.quota.items())
