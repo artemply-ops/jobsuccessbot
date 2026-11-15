@@ -29,3 +29,18 @@ def test_company_scheme_key_roundtrip_and_render():
 def test_light_brand_color_gets_darker_signal():
     p = brand.palette(["ffd400"])  # светло-жёлтый бренд
     assert p["head"] != p["signal"] and p["head"].startswith("#")
+
+
+def test_icon_fallback_finds_brand_color():
+    import io
+
+    from PIL import Image
+
+    im = Image.new("RGBA", (32, 32), (255, 255, 255, 0))
+    for x in range(4, 28):
+        for y in range(4, 28):
+            im.putpixel((x, y), (33, 160, 56, 255))  # зелёная иконка на прозрачном фоне
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    colors = brand.pick(brand.icon_colors(buf.getvalue()))
+    assert colors and brand.is_brand(colors[0])

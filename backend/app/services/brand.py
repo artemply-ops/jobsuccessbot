@@ -89,6 +89,26 @@ def collect(html_text: str, css_texts: list[str]) -> Counter:
     return w
 
 
+def icon_colors(data: bytes) -> Counter:
+    """Цвета иконки сайта: запасной путь, когда страница собирается скриптами или закрыта защитой от ботов."""
+    import io
+
+    from PIL import Image
+
+    w: Counter = Counter()
+    try:
+        im = Image.open(io.BytesIO(data))
+        im = im.convert("RGBA").resize((48, 48))
+    except Exception:  # noqa: BLE001  битая или неподдерживаемая иконка
+        return w
+    for r, g, b, a in im.getdata():
+        if a < 128:
+            continue
+        r, g, b = (min(255, round(x / 16) * 16) for x in (r, g, b))  # грубо: близкие оттенки в одну корзину
+        w[f"{r:02x}{g:02x}{b:02x}"] += 1
+    return w
+
+
 async def brand_colors(domain: str) -> list[str]:
     s = get_settings()
     url = f"https://{domain}"
@@ -98,13 +118,12 @@ async def brand_colors(domain: str) -> list[str]:
             if not await allowed(c, url):
                 return []
             r = await c.get(url)
-            if r.status_code != 200:
-                return []
             page = r.text[:MAX_BYTES]
             soup = BeautifulSoup(page, "html.parser")
             host = urlparse(str(r.url)).netloc
             css = []
-            for link in soup.find_all("link", rel=lambda v: v and "stylesheet" in v)[:MAX_CSS * 2]:
+            sheets = soup.find_all("link", rel=lambda v: v and "stylesheet" in v)[:MAX_CSS * 2] if r.status_code == 200 else []
+            for link in sheets:
                 href = urljoin(str(r.url), link.get("href", ""))
                 if urlparse(href).netloc.split(":")[0].endswith(host.split(":")[0].removeprefix("www.")):
                     try:
@@ -115,10 +134,23 @@ async def brand_colors(domain: str) -> list[str]:
                         pass
                 if len(css) >= MAX_CSS:
                     break
+            colors = pick(collect(page, css)) if r.status_code == 200 else []
+            if not colors:  # запасной путь: иконка сайта
+                icons = [urljoin(str(r.url), l.get("href", "")) for l in soup.find_all(
+                    "link", rel=lambda v: v and any(x in v for x in ("icon", "apple-touch-icon")))] if r.status_code == 200 else []
+                for href in [*icons[:3], f"https://{domain}/favicon.ico"]:
+                    try:
+                        ir = await c.get(href)
+                    except httpx.HTTPError:
+                        continue
+                    if ir.status_code == 200 and len(ir.content) < MAX_BYTES:
+                        colors = pick(icon_colors(ir.content))
+                        if colors:
+                            break
+            return colors
     except httpx.HTTPError as e:
         log.info("brand %s: %s", domain, type(e).__name__)
         return []
-    return pick(collect(page, css))
 
 
 def palette(colors: list[str]) -> dict:
