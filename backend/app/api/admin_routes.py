@@ -8,6 +8,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -142,6 +143,58 @@ async def stats(date_from: date | None = None, date_to: date | None = None, _: U
         "channels": dict(channels), "funnel": [{"step": s, "users": n} for s, n in funnel],
         "billed": billed, "sources": sources, "errors": sorted(errors, key=lambda e: e["at"], reverse=True)[:15],
     }
+
+
+# ---------- Тексты сайта ----------
+
+site = APIRouter(prefix="/api")
+
+
+@site.get("/site/texts")
+async def site_texts_public(session: AsyncSession = Depends(get_session)):
+    """Без входа: тексты лендинга (последняя версия поверх умолчаний)."""
+    from app.services import site_texts
+
+    data, _ = await site_texts.current(session)
+    return data
+
+
+@router.get("/texts")
+async def texts_get(_: User = Depends(_admin), session: AsyncSession = Depends(get_session)):
+    from app.services import site_texts
+
+    data, vid = await site_texts.current(session)
+    return {"schema": site_texts.SCHEMA, "data": data, "version": vid, "placeholders": site_texts.PLACEHOLDERS,
+            "warnings": site_texts.warnings(data), "history": await site_texts.history(session)}
+
+
+class TextsIn(BaseModel):
+    data: dict
+    version: int | None = None  # какую версию редактировали: защита от затирания чужой правки
+
+
+@router.put("/texts")
+async def texts_put(body: TextsIn, user: User = Depends(_admin), session: AsyncSession = Depends(get_session)):
+    from app.services import site_texts
+
+    _, vid = await site_texts.current(session)
+    if body.version != vid:
+        raise HTTPException(409, "Тексты уже изменили в другой вкладке. Обновите страницу, чтобы не затереть правку")
+    row = await site_texts.save(session, body.data, user.id)
+    await session.commit()
+    return {"version": row.id, "warnings": site_texts.warnings(row.data)}
+
+
+@router.post("/texts/restore/{version_id}")
+async def texts_restore(version_id: int, user: User = Depends(_admin), session: AsyncSession = Depends(get_session)):
+    from app.services import site_texts
+
+    try:
+        row = await site_texts.restore(session, version_id, user.id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    await session.commit()
+    return {"version": row.id}
 
 
 async def _sources(session: AsyncSession, users, with_profile: set[int], with_pkg: set[int],

@@ -1,0 +1,243 @@
+"""Тексты лендинга, которые владелец правит в админке без выкатки.
+
+Структура (какие блоки и поля есть) задаётся здесь, в SCHEMA и DEFAULTS. Админка меняет только значения.
+Каждое сохранение это новая версия (site_text_versions), откат к любой из последних 30. Цены в тексты не пишутся:
+вместо них подстановки {week}, {month}, {package}, {revision}, {rival_week}, {rival_month}, их подставляет сайт
+из services/billing.py, чтобы цены на сайте не расходились с офертой и оплатой.
+"""
+
+from copy import deepcopy
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import SiteTextVersion
+
+KEEP = 30
+PLACEHOLDERS = ["{week}", "{month}", "{package}", "{revision}", "{rival_week}", "{rival_month}"]
+
+# type: line (строка), text (абзац), items (список карточек с полями fields)
+SCHEMA = [
+    {"key": "hero", "title": "Первый экран", "fields": [
+        {"key": "eyebrow", "label": "Плашка над заголовком", "type": "line"},
+        {"key": "title", "label": "Главный слоган", "type": "line"},
+        {"key": "lead", "label": "Подзаголовок", "type": "text"},
+        {"key": "cta", "label": "Главная кнопка", "type": "line"},
+        {"key": "cta2", "label": "Вторая кнопка", "type": "line"},
+        {"key": "trust", "label": "Галочки под кнопками", "type": "items", "fields": [{"key": "text", "label": "Текст"}]},
+    ]},
+    {"key": "band", "title": "Преимущества (зелёный блок)", "fields": [
+        {"key": "title", "label": "Заголовок", "type": "line"},
+        {"key": "items", "label": "Карточки", "type": "items", "fields": [
+            {"key": "icon", "label": "Значок"}, {"key": "title", "label": "Заголовок"}, {"key": "text", "label": "Текст", "long": True}]},
+    ]},
+    {"key": "how", "title": "Как это работает", "fields": [
+        {"key": "title", "label": "Заголовок", "type": "line"},
+        {"key": "subtitle", "label": "Подзаголовок", "type": "line"},
+        {"key": "quick_label", "label": "Быстрый путь: метка", "type": "line"},
+        {"key": "quick_title", "label": "Быстрый путь: название", "type": "line"},
+        {"key": "quick_time", "label": "Быстрый путь: время", "type": "line"},
+        {"key": "quick_steps", "label": "Быстрый путь: шаги", "type": "items", "fields": [
+            {"key": "title", "label": "Шаг"}, {"key": "text", "label": "Пояснение", "long": True}]},
+        {"key": "long_label", "label": "Под вакансию: метка", "type": "line"},
+        {"key": "long_title", "label": "Под вакансию: название", "type": "line"},
+        {"key": "long_time", "label": "Под вакансию: время", "type": "line"},
+        {"key": "long_steps", "label": "Под вакансию: шаги", "type": "items", "fields": [
+            {"key": "title", "label": "Шаг"}, {"key": "text", "label": "Пояснение", "long": True}]},
+    ]},
+    {"key": "example", "title": "Пример «было / стало»", "fields": [
+        {"key": "title", "label": "Заголовок", "type": "line"},
+        {"key": "subtitle", "label": "Подзаголовок", "type": "text"},
+        {"key": "before", "label": "Было", "type": "text"},
+        {"key": "after", "label": "Стало (пункты)", "type": "items", "fields": [{"key": "text", "label": "Пункт"}]},
+    ]},
+    {"key": "get", "title": "Что вы получите", "fields": [
+        {"key": "title", "label": "Заголовок", "type": "line"},
+        {"key": "items", "label": "Карточки", "type": "items", "fields": [
+            {"key": "title", "label": "Заголовок"}, {"key": "text", "label": "Текст", "long": True}]},
+    ]},
+    {"key": "prices", "title": "Цены", "fields": [
+        {"key": "title", "label": "Заголовок", "type": "line"},
+        {"key": "subtitle", "label": "Подзаголовок", "type": "line"},
+        {"key": "badge", "label": "Метка на тарифе «Неделя»", "type": "line"},
+    ]},
+    {"key": "faq", "title": "Вопросы и ответы", "fields": [
+        {"key": "title", "label": "Заголовок", "type": "line"},
+        {"key": "items", "label": "Вопросы", "type": "items", "fields": [
+            {"key": "q", "label": "Вопрос"}, {"key": "a", "label": "Ответ", "long": True}]},
+    ]},
+    {"key": "final", "title": "Финальный блок и подвал", "fields": [
+        {"key": "title", "label": "Заголовок", "type": "line"},
+        {"key": "text", "label": "Текст", "type": "line"},
+        {"key": "telegram", "label": "Строка про Telegram (перед ссылкой на бота)", "type": "line"},
+        {"key": "footnote", "label": "Сноска о сравнении цен", "type": "text"},
+    ]},
+]
+
+DEFAULTS = {
+    "hero": {
+        "eyebrow": "Резюме за 2 минуты",
+        "title": "Ваш реальный опыт на языке работодателя",
+        "lead": "Пришлите старое резюме или расскажите об опыте голосом, добавьте вакансию. Получите резюме, "
+                "одностраничник и сопроводительное письмо, собранные под требования работодателя.",
+        "cta": "Сделать резюме бесплатно",
+        "cta2": "У меня есть кабинет",
+        "trust": [{"text": "Первый пакет и правка бесплатно"}, {"text": "Без карты и регистрации на старте"},
+                  {"text": "Данные хранятся в России"}],
+    },
+    "band": {
+        "title": "Дешевле, безопаснее и точнее конкурентов",
+        "items": [
+            {"icon": "₽", "title": "Дешевле*", "text": "Неделя {week} ₽ против {rival_week} ₽ у ближайшего конкурента, "
+             "месяц {month} ₽ против {rival_month} ₽. Можно заплатить за один пакет: {package} ₽."},
+            {"icon": "🔒", "title": "Безопаснее", "text": "Нейросеть не видит ваше имя, телефон, почту и фото, ей уходит "
+             "обезличенный текст. Настоящие данные появляются только в готовом PDF на нашем сервере в России."},
+            {"icon": "✓", "title": "Никаких фантазий", "text": "Не придумываем опыт, за который вам потом отвечать на "
+             "собеседовании. Каждый пункт отдельно сверяем с тем, что вы рассказали, а неподтвержденное убираем."},
+            {"icon": "?", "title": "Верные вопросы и честная оценка", "text": "Спрашиваем только то, что важно для этой "
+             "вакансии. Честно показываем, сколько требований закрывает ваш опыт и чего не хватает."},
+            {"icon": "◎", "title": "Под компанию", "text": "Учитываем сферу компании, ее миссию, ценности и то, как она "
+             "пишет о себе. Резюме можно оформить в фирменных цветах компании."},
+            {"icon": "⏱", "title": "Быстро", "text": "Резюме из опыта примерно за 2 минуты. Под конкретную вакансию "
+             "с проработкой требований за 5-7 минут."},
+        ],
+    },
+    "how": {
+        "title": "Как это работает",
+        "subtitle": "Два пути: быстро собрать резюме из опыта или подготовиться к конкретной вакансии.",
+        "quick_label": "быстро", "quick_title": "Резюме из опыта", "quick_time": "⏱ около 2 минут",
+        "quick_steps": [
+            {"title": "Закиньте материалы", "text": "Старое резюме, заметки, рассказ голосом. Можно все вперемешку."},
+            {"title": "Соберем профиль", "text": "Выделим опыт и достижения, около 30 секунд."},
+            {"title": "Получите документы", "text": "Резюме и одностраничник в одном стиле, около 45 секунд."},
+        ],
+        "long_label": "под вакансию", "long_title": "Проработка вакансии", "long_time": "⏱ 5-7 минут",
+        "long_steps": [
+            {"title": "Материалы о себе", "text": "Как в быстром пути."},
+            {"title": "Вакансия и компания", "text": "Ссылка или текст вакансии, по желанию сайт компании: миссия, "
+             "ценности, фирменные цвета."},
+            {"title": "Оценка соответствия", "text": "Покажем, какие требования ваш опыт уже закрывает, а каких не хватает."},
+            {"title": "2-3 вопроса", "text": "Уточним то, что важно для этой вакансии, но не попало в резюме."},
+            {"title": "Документы под вакансию", "text": "Резюме, одностраничник и письмо на языке вакансии, каждый факт проверен."},
+            {"title": "Доработка", "text": "Покрытие требований до и после, правки одним сообщением."},
+        ],
+    },
+    "example": {
+        "title": "Те же факты, другая подача",
+        "subtitle": "Пример. Мы ничего не добавляем от себя, а переписываем ваш опыт языком вакансии.",
+        "before": "Работал менеджером по продажам. Занимался клиентами, звонки, встречи, CRM. Сделали план в прошлом "
+                  "году, взял трех новых крупных клиентов. Обучал новичков.",
+        "after": [{"text": "Вел клиентов целиком: звонки, встречи, сделки в CRM"},
+                  {"text": "Привлек 3 новых крупных клиентов за год"}, {"text": "Выполнил годовой план"},
+                  {"text": "Обучал новых менеджеров"}],
+    },
+    "get": {
+        "title": "Что вы получите",
+        "items": [
+            {"title": "Резюме", "text": "Под требования конкретной вакансии, с ключевыми словами из объявления."},
+            {"title": "Одностраничник", "text": "Когда просят коротко или для первого знакомства."},
+            {"title": "Сопроводительное письмо", "text": "Почему вы подходите именно на эту позицию, без шаблонных фраз."},
+            {"title": "Покрытие требований", "text": "Что из вакансии уже закрыто, чего не хватает и как это добавить. "
+             "Цвета резюме можно взять фирменные."},
+        ],
+    },
+    "prices": {
+        "title": "Цены",
+        "subtitle": "Первый пакет и одна правка бесплатно. Проверка резюме бесплатна всегда.",
+        "badge": "выгоднее",
+    },
+    "faq": {
+        "title": "Вопросы",
+        "items": [
+            {"q": "Нейросеть не припишет мне лишнего?", "a": "Нет. Мы собираем документы только из того, что вы "
+             "рассказали, а потом отдельной проверкой сверяем каждый пункт с вашим опытом. Что не подтверждается, убираем."},
+            {"q": "Что будет с моими данными?", "a": "Хранятся на сервере в России. Нейросеть видит обезличенный текст: "
+             "имя, телефон, почту и фото мы заменяем метками и подставляем обратно только в готовый PDF."},
+            {"q": "Сколько это занимает?", "a": "Быстрый путь около 2 минут: сам ИИ работает чуть больше минуты. Под "
+             "конкретную вакансию 5-7 минут вместе с ответами на 2-3 вопроса."},
+            {"q": "Вы учитываете компанию, куда я подаюсь?", "a": "Да. Читаем сайт компании: чем она занимается, миссию, "
+             "ценности, как пишет о себе. Под это расставляем акценты в резюме и пишем письмо. Цвета резюме можно взять "
+             "фирменные, их снимаем с сайта компании."},
+            {"q": "Если результат не понравился?", "a": "Напишите, что поправить, одним сообщением. Первая правка "
+             "бесплатная, следующие по {revision} ₽ или входят в тариф."},
+            {"q": "Можно начать на сайте, а закончить в Telegram?", "a": "Да. Кабинет один: войдите на сайте через "
+             "Telegram или привяжите его в профиле, и все материалы и пакеты появятся в боте. И наоборот."},
+            {"q": "Как оплатить?", "a": "На сайте картой, в Telegram звездами. Тариф общий: купили в одном месте, "
+             "пользуетесь везде. Первый пакет бесплатно, карта для этого не нужна."},
+        ],
+    },
+    "final": {
+        "title": "Следующее собеседование начинается с резюме",
+        "text": "Первый пакет бесплатно. Резюме за 2 минуты, под вакансию за 5-7.",
+        "telegram": "Удобнее в Telegram? Откройте бота, кабинет тот же.",
+        "footnote": "* Сравнение с тарифами ближайшего по функциям сервиса подготовки резюме на 15.11.2026.",
+    },
+}
+
+
+def _merge(saved: dict) -> dict:
+    """Сохранённые значения поверх умолчаний: новое поле в коде сразу появляется на сайте с текстом по умолчанию."""
+    out = deepcopy(DEFAULTS)
+    for sec in SCHEMA:
+        got = saved.get(sec["key"]) or {}
+        for f in sec["fields"]:
+            v = got.get(f["key"])
+            if f["type"] == "items":
+                if isinstance(v, list):
+                    out[sec["key"]][f["key"]] = [{k["key"]: str((it or {}).get(k["key"], ""))[:2000] for k in f["fields"]}
+                                                 for it in v if isinstance(it, dict)][:20]
+            elif isinstance(v, str):
+                out[sec["key"]][f["key"]] = v[:2000]
+    return out
+
+
+async def current(session: AsyncSession) -> tuple[dict, int | None]:
+    row = (await session.execute(select(SiteTextVersion).order_by(SiteTextVersion.id.desc()).limit(1))).scalar_one_or_none()
+    return (_merge(row.data), row.id) if row else (deepcopy(DEFAULTS), None)
+
+
+def warnings(data: dict) -> list[str]:
+    """Подсказки редактору: длинное тире (правило проекта) и слишком длинный слоган. Сохранять не мешают."""
+    out = []
+
+    def walk(v, path):
+        if isinstance(v, str):
+            if "—" in v or "–" in v:
+                out.append(f"{path}: длинное тире, лучше точка, запятая или двоеточие")
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                walk(x, f"{path}.{k}" if path else k)
+        elif isinstance(v, list):
+            for i, x in enumerate(v, 1):
+                walk(x, f"{path}[{i}]")
+
+    walk(data, "")
+    if len(data.get("hero", {}).get("title", "")) > 70:
+        out.append("hero.title: слоган длиннее 70 знаков, на телефоне займёт много строк")
+    return out
+
+
+async def save(session: AsyncSession, data: dict, user_id: int) -> SiteTextVersion:
+    if (await session.execute(select(SiteTextVersion.id).limit(1))).first() is None:
+        session.add(SiteTextVersion(data=deepcopy(DEFAULTS), created_by=None))  # исходные тексты: к ним можно вернуться
+        await session.flush()
+    row = SiteTextVersion(data=_merge(data), created_by=user_id)
+    session.add(row)
+    await session.flush()
+    old = (await session.execute(select(SiteTextVersion.id).order_by(SiteTextVersion.id.desc()).offset(KEEP))).scalars().all()
+    for vid in old:
+        await session.delete(await session.get(SiteTextVersion, vid))
+    return row
+
+
+async def history(session: AsyncSession) -> list[dict]:
+    rows = (await session.execute(select(SiteTextVersion).order_by(SiteTextVersion.id.desc()).limit(KEEP))).scalars().all()
+    return [{"id": r.id, "created_at": r.created_at.isoformat(), "title": (r.data.get("hero") or {}).get("title", "")}
+            for r in rows]
+
+
+async def restore(session: AsyncSession, version_id: int, user_id: int) -> SiteTextVersion:
+    row = await session.get(SiteTextVersion, version_id)
+    if row is None:
+        raise ValueError("Версия не найдена")
+    return await save(session, row.data, user_id)

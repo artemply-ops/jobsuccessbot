@@ -441,3 +441,16 @@ ol { margin: 4px 0; padding-left: 20px; }
 .funnel-row { display: grid; grid-template-columns: 150px 1fr 70px; gap: 8px; align-items: center; }
 .funnel-bar { height: 10px; border-radius: 99px; background: var(--bg2); overflow: hidden; }
 .funnel-bar i { display: block; height: 100%; background: var(--gold); border-radius: 99px; }
+/* Редактор текстов сайта (AdminTexts.tsx) */
+.sec-toggle { display: flex; justify-content: space-between; align-items: center; width: 100%; border: 0; background: none;
+  font: inherit; color: var(--text); cursor: pointer; padding: 0; }
+.sec-toggle span { color: var(--green); font-size: 20px; }
+.field-label { font-size: 13px; color: var(--muted); }
+.text-item { display: flex; gap: 8px; padding: 10px; border-radius: 10px; background: var(--bg2); }
+.item-tools { display: flex; flex-direction: column; gap: 2px; }
+.icon-input { width: 70px !important; }
+.danger-text { color: var(--bad); }
+.publish-bar { position: sticky; bottom: 76px; z-index: 5; display: flex; justify-content: flex-end; align-items: center; gap: 10px;
+  flex-wrap: wrap; padding: 12px; border-radius: 14px; background: var(--bg); border: 1px solid var(--border); box-shadow: var(--shadow); }
+.history li { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+code { font-size: 12px; background: var(--bg2); padding: 1px 5px; border-radius: 5px; }

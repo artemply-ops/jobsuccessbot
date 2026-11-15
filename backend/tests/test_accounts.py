@@ -172,3 +172,25 @@ async def test_admin_stats_only_for_admin_and_counts():
         assert len(d["series"]) == 30 and d["kpi"]["users_total"] >= 1
         assert d["funnel"][0]["step"] == "Новые пользователи"
         assert (await c.get("/api/admin/stats?date_from=2026-11-10&date_to=2026-11-01", headers=_h(tok))).status_code == 400
+
+
+async def test_site_texts_edit_history_restore():
+    await init_db()
+    async with _client() as c:
+        pub = (await c.get("/api/site/texts")).json()
+        assert pub["hero"]["eyebrow"] == "Резюме за 2 минуты"
+        assert (await c.put("/api/admin/texts", json={"data": {}})).status_code == 401
+        h = _h((await c.post("/api/auth/dev")).json()["token"])
+        cur = (await c.get("/api/admin/texts", headers=h)).json()
+        data = cur["data"]
+        old_title = data["hero"]["title"]
+        data["hero"]["title"] = "Новый слоган — тест"
+        r = await c.put("/api/admin/texts", headers=h, json={"data": data, "version": cur["version"]})
+        assert r.status_code == 200 and any("тире" in w for w in r.json()["warnings"])
+        assert (await c.get("/api/site/texts")).json()["hero"]["title"] == "Новый слоган — тест"
+        # устаревшая версия не затирает свежую правку
+        assert (await c.put("/api/admin/texts", headers=h, json={"data": data, "version": cur["version"]})).status_code == 409
+        hist = (await c.get("/api/admin/texts", headers=h)).json()["history"]
+        assert len(hist) >= 2  # первая версия в истории это исходные тексты
+        assert (await c.post(f"/api/admin/texts/restore/{hist[1]['id']}", headers=h)).status_code == 200
+        assert (await c.get("/api/site/texts")).json()["hero"]["title"] == old_title

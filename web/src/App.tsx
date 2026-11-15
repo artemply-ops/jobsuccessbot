@@ -9,6 +9,7 @@ import Landing from "./pages/Landing";
 import { Offer, Privacy } from "./pages/Legal";
 import { PayReturn } from "./pages/Billing";
 import AdminPage from "./pages/Admin";
+import AdminTexts from "./pages/AdminTexts";
 
 // Страницы без входа: юридические тексты нужны ЮKassa и пользователю до оплаты
 const PUBLIC: Record<string, React.ComponentType> = { "/offer": Offer, "/privacy": Privacy };
@@ -62,6 +63,8 @@ export default function App() {
   const { pathname } = useLocation();
   const Pub = PUBLIC[pathname];
   if (Pub) return <div className="content"><Pub /><p><a href="/">← JobPilot</a></p></div>;
+  // Предпросмотр лендинга для админа, который уже вошёл (иначе он видит приложение, а не сайт)
+  if (pathname === "/site") return <Landing onAuthed={() => { window.location.href = "/make"; }} />;
   if (state === "loading") return <div className="center muted">Загрузка…</div>;
   if (state === "anon") return inTelegram()
     ? <div className="center narrow">{error && <p className="error">{error}</p>}<LoginBox onDone={loadMe} /></div>
@@ -87,6 +90,7 @@ export default function App() {
           <Route path="/profile" element={<ProfilePage me={me!} onMeChange={loadMe} />} />
           <Route path="/pay/return" element={<PayReturn />} />
           {me?.is_admin && <Route path="/admin" element={<AdminPage />} />}
+          {me?.is_admin && <Route path="/admin/texts" element={<AdminTexts />} />}
           <Route path="*" element={<Navigate to="/make" replace />} />
         </Routes>
       </main>

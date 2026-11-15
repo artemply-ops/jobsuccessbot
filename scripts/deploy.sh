@@ -34,22 +34,24 @@ tar -C web -czf /tmp/jsb-dist.tgz dist
 retry scp -q "${SSH_OPTS[@]}" /tmp/jsb-dist.tgz "$HOST:/tmp/jsb-dist.tgz"
 rm -f /tmp/jsb-dist.tgz
 
-echo "4/5 git pull и сборка образа (app остановлен на время сборки)"
+echo "4/5 git pull и сборка образа (app работает, пока хватает памяти)"
 retry ssh "${SSH_OPTS[@]}" "$HOST" "bash -s" <<EOS
 set -e
 cd $DIR
 git fetch -q origin main && git reset -q --hard origin/main
 test "\$(git rev-parse --short HEAD)" = "$REV" || { echo "на сервере не тот коммит"; exit 1; }
 rm -rf web/dist && tar -C web -xzf /tmp/jsb-dist.tgz && rm -f /tmp/jsb-dist.tgz
+# Сборка при работающем app: сайт и бот не лежат, даже если pip качает долго. Фронтенд здесь не собирается
+# (причина OOM 16.10.2026 была в npm). Если свободной памяти меньше 1500 МБ, app на время сборки останавливается.
 # При неудачной сборке app поднимается на прежнем образе: бот не остаётся выключенным
-nohup sh -c 'C="docker compose -f docker-compose.server.yml -p jobsuccess"; \$C stop app; if \$C build -q app; then \$C up -d app; echo EXIT=0; else \$C up -d --no-build app; echo "EXIT=1 (сборка упала, app поднят на прежнем образе)"; fi' > /tmp/jsb-build.log 2>&1 </dev/null &
+nohup sh -c 'C="docker compose -f docker-compose.server.yml -p jobsuccess"; AV=\$(grep MemAvailable /proc/meminfo | tr -dc 0-9); echo "памяти свободно \$AV кБ"; [ "\$AV" -lt 1536000 ] && \$C stop app; if \$C build -q app; then \$C up -d app; echo EXIT=0; else \$C up -d --no-build app; echo "EXIT=1 (сборка упала, app поднят на прежнем образе)"; fi' > /tmp/jsb-build.log 2>&1 </dev/null &
 echo "  сборка запущена на сервере, коммит $REV"
 EOS
 
 echo "5/5 жду старт"
 retry ssh "${SSH_OPTS[@]}" "$HOST" "bash -s" <<'EOS'
-for i in $(seq 1 120); do grep -q "EXIT=" /tmp/jsb-build.log && break; sleep 5; done
-grep -a "EXIT=" /tmp/jsb-build.log || { echo "сборка не завершилась за 10 минут"; tail -5 /tmp/jsb-build.log; exit 1; }
+for i in $(seq 1 360); do grep -q "EXIT=" /tmp/jsb-build.log && break; sleep 5; done
+grep -a "EXIT=" /tmp/jsb-build.log || { echo "сборка не завершилась за 30 минут, app работает на прежнем образе"; tail -5 /tmp/jsb-build.log; exit 1; }
 cd /opt/jobsuccessbot
 for i in $(seq 1 40); do
   docker compose -f docker-compose.server.yml -p jobsuccess logs --since 5m app 2>&1 </dev/null | grep -q "Run polling for bot" && break; sleep 3

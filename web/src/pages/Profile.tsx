@@ -89,6 +89,7 @@ export default function ProfilePage({ me, onMeChange }: { me: Me; onMeChange: ()
       <div className="cab-tabs">
         {TABS.map(([k, t]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{t}</button>)}
         {me.is_admin && <a href="/admin">Админка</a>}
+        {me.is_admin && <a href="/admin/texts">Тексты сайта</a>}
       </div>
       {tab === "cv" && <MyPackages />}
       {tab === "jobs" && <MyTargets />}

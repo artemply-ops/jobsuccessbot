@@ -82,6 +82,16 @@ class PushSubscription(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class SiteTextVersion(Base):
+    """Версия текстов лендинга (services/site_texts.py). Текущая это последняя, хранятся 30."""
+
+    __tablename__ = "site_text_versions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON)
+    created_by: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class Contact(Base):
     """Хранилище ПДн. Никогда не передаётся во внешние сервисы целиком."""
 
