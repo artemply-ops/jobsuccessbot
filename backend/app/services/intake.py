@@ -217,8 +217,11 @@ async def add_target(session: AsyncSession, user: User, *, url: str | None = Non
     if url and not text:
         page = await fetch_page(url)
         text = page.text
-    elif url:
-        url = normalize_url(url)
+    elif url:  # текст есть: ссылка только для справки, её ошибка не останавливает сценарий
+        try:
+            url = normalize_url(url)
+        except IntakeError:
+            url = ""
     text = scrub_contacts(text)[:MAX_VACANCY_CHARS]
     if len(text) < 80:
         raise IntakeError("Текст вакансии слишком короткий. Пришлите его целиком: задачи и требования.")

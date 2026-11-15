@@ -1,10 +1,10 @@
-"""Этап 3 пивота. Пакет под вакансию на выбор: полное резюме, резюме на одну страницу, сопроводительное письмо.
+"""Этап 3 пивота. Пакет под вакансию на выбор: полное резюме, одностраничник, сопроводительное письмо.
 
 Защита от приукрашивания в три слоя:
 1. промпт: только факты профиля, ничего не добавлять;
 2. проверка фактов (SYSTEM_FACTCHECK) по каждому утверждению, включая показатели в шапке;
 3. детерминированно: показатель остаётся, только если его цифры дословно есть в профиле.
-Резюме на одну страницу не генерируется отдельно: его ужимает export.fit_one_page настоящим рендером.
+Одностраничник не генерируется отдельно: его ужимает export.fit_one_page настоящим рендером.
 """
 
 import json
@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Package, Target, User, Vacancy
 from app.schemas import CV, PACKAGE_ITEMS, FactCheck, TailoredBoth, TailoredCV, TailoredLetter
 from app.services import billing, intake, llm, package
-from app.services.cv_render import SCHEMES
+from app.services import cv_render
 from app.services.profile import latest_profile, profile_to_text
 
 log = logging.getLogger(__name__)
@@ -44,6 +44,9 @@ SYSTEM_CV = f"""Ты сильный карьерный консультант и
   к наименее релевантному (менее важные пункты будут убраны, если резюме не влезет на страницу);
   пункт начинается с глагола и, где есть в профиле, содержит результат с цифрой.
 - skills: до 14, сначала те, что требует вакансия и что есть у кандидата.
+- Если есть досье компании: учти сферу, продукт, ценности, миссию и tone of voice компании. Подбирай акценты
+  и формулировки из опыта кандидата так, чтобы они отзывались этой компании, используй её терминологию.
+  Ценности компании не приписывай кандидату как факты: только то, что подтверждает его опыт.
 {RULES}"""
 
 SYSTEM_CV_GENERAL = f"""Ты сильный карьерный консультант и редактор. Собираешь сильное резюме из опыта кандидата,
@@ -111,7 +114,7 @@ class PackageError(ValueError):
 def normalize_items(items: list[str]) -> list[str]:
     out = [i for i in PACKAGE_ITEMS if i in set(items or [])]
     if not out:
-        raise PackageError("Выберите хотя бы один документ: резюме, резюме на одну страницу или письмо.")
+        raise PackageError("Выберите хотя бы один документ: резюме, одностраничник или письмо.")
     return out
 
 
@@ -164,7 +167,7 @@ async def build(session: AsyncSession, user: User, target: Target, items: list[s
     if general:  # без вакансии письмо писать не о чем
         items = [i for i in items if i != "letter"]
     items = normalize_items(items)
-    if scheme not in SCHEMES:
+    if not cv_render.valid(scheme):
         raise PackageError("Неизвестная цветовая схема")
     prof = await latest_profile(session, user.id)
     if prof is None:

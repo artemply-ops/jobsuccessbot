@@ -26,7 +26,7 @@ from app.services import cv_render, export, intake, llm, profile
 log = logging.getLogger("bot.cv")
 router = Router(name="cv_flow")
 
-ITEM_TITLES = {"cv": "Резюме", "one_page": "Резюме на 1 страницу", "letter": "Сопроводительное письмо"}
+ITEM_TITLES = {"cv": "Резюме", "one_page": "Одностраничник", "letter": "Сопроводительное письмо"}
 URL_RE = re.compile(r"^\s*(https?://|www\.)\S+\s*$|^\s*[\w-]+(\.[\w-]+)+/\S*\s*$", re.IGNORECASE)
 
 
@@ -64,10 +64,30 @@ def toggle(selected: list[str], item: str) -> list[str]:
     return [i for i in PACKAGE_ITEMS if i in out]
 
 
-def scheme_kb(prefix: str = "cvs") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=s.title.split(" (")[0],
-                                                                       callback_data=f"{prefix}:{s.key}")]
-                                                 for s in cv_render.SCHEMES.values()])
+def scheme_kb(prefix: str = "cvs", company: tuple[str, str] | None = None) -> InlineKeyboardMarkup:
+    """company: (ключ схемы, название) в цветах компании, если удалось снять цвета с её сайта."""
+    rows = [[InlineKeyboardButton(text=s.title.split(" (")[0], callback_data=f"{prefix}:{s.key}")]
+            for s in cv_render.SCHEMES.values()]
+    if company:
+        rows.insert(0, [InlineKeyboardButton(text=f"🎨 {company[1]}", callback_data=f"{prefix}:{company[0]}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def company_scheme(target_id: int | None) -> tuple[str, str] | None:
+    """Схема в цветах компании вакансии: цвета снимаются с её сайта заново при каждом показе."""
+    from app.services import brand
+
+    if not target_id:
+        return None
+    async with SessionLocal() as s:
+        t = await s.get(Target, target_id)
+        v = await s.get(Vacancy, t.vacancy_id) if t else None
+    if not t or not t.company_domain:
+        return None
+    colors = await brand.brand_colors(t.company_domain)
+    if not colors:
+        return None
+    return cv_render.company_key(brand.palette(colors)), f"Цвета {v.company_name}"[:40] if v else "Цвета компании"
 
 
 SAMPLE = {  # ТЕСТОВЫЕ ДАННЫЕ для образца схем: человек и цифры вымышленные
@@ -434,19 +454,21 @@ async def on_item(cb: CallbackQuery, state: FSMContext):
 
 async def ask_scheme(message: Message, state: FSMContext):
     await state.set_state(CV.scheme)
+    company = await company_scheme((await state.get_data()).get("target_id"))
+    note = "\n🎨 Первой кнопкой: схема в цветах компании, куда вы подаётесь." if company else ""
     await message.answer_photo(BufferedInputFile(schemes_preview(), "schemes.png"),
-                               caption="<b>Шаг 5.</b> Выберите цветовую схему (слева направо, как в списке).",
-                               reply_markup=scheme_kb())
+                               caption=f"<b>Шаг 5.</b> Выберите цветовую схему (слева направо, как в списке).{note}",
+                               reply_markup=scheme_kb(company=company))
 
 
 @router.callback_query(F.data.startswith("cvs:"))
 async def on_scheme(cb: CallbackQuery, state: FSMContext):
     key = cb.data.split(":", 1)[1]
-    if key not in cv_render.SCHEMES:
+    if not cv_render.valid(key):
         await cb.answer()
         return
     await state.update_data(scheme=key)
-    await cb.answer(cv_render.SCHEMES[key].title)
+    await cb.answer(cv_render.scheme_of(key).title)
     data = await state.get_data()
     if not ({"cv", "one_page"} & set(data.get("items", []))):  # только письмо: фото не нужно
         await generate(cb.message, state, cb.from_user)
@@ -548,7 +570,7 @@ async def send_files(message: Message, package_id: int, accept_flags: bool = Fal
         except Exception as e:
             await _error(message, e, f"render {item}")
             continue
-        name = {"cv": "Резюме", "one_page": "Резюме_1_страница", "letter": "Сопроводительное_письмо"}[item]
+        name = {"cv": "Резюме", "one_page": "Одностраничник", "letter": "Сопроводительное_письмо"}[item]
         await message.answer_document(BufferedInputFile(data, f"{name}_v{pkg.version}.pdf"))
     kb = []
     if "letter" in (pkg.items or []) and letter_flags and not accept_flags:
@@ -731,8 +753,9 @@ async def on_change_scheme(cb: CallbackQuery):
     await cb.answer()
     pkg = await _own(cb, int(cb.data.split(":")[1]))
     if pkg:
+        company = await company_scheme(pkg.target_id)
         await cb.message.answer_photo(BufferedInputFile(schemes_preview(), "schemes.png"), caption="Выберите схему:",
-                                      reply_markup=scheme_kb(f"cvx:{pkg.id}"))
+                                      reply_markup=scheme_kb(f"cvx:{pkg.id}", company))
 
 
 @router.callback_query(F.data.startswith("cvx:"))
@@ -740,10 +763,10 @@ async def on_rerender(cb: CallbackQuery):
     """Смена схемы без ИИ: перерисовываем те же документы."""
     _, pid, key = cb.data.split(":")
     pkg = await _own(cb, int(pid))
-    if not pkg or key not in cv_render.SCHEMES:
+    if not pkg or not cv_render.valid(key):
         await cb.answer()
         return
-    await cb.answer(cv_render.SCHEMES[key].title)
+    await cb.answer(cv_render.scheme_of(key).title)
     async with SessionLocal() as s:
         p = await s.get(Package, pkg.id)
         p.scheme = key

@@ -42,6 +42,29 @@ SCHEMES = {s.key: s for s in [
 ]}
 
 
+COMPANY = "company"  # ключ «company-<signal>-<head>-<highlight>»: цвета зашиты в ключ, пересчёт не нужен
+_HEX6 = __import__("re").compile(r"^company-([0-9a-f]{6})-([0-9a-f]{6})-([0-9a-f]{6})$")
+
+
+def company_key(p: dict) -> str:
+    return f"{COMPANY}-{p['signal'][1:]}-{p['head'][1:]}-{p['highlight'][1:]}"
+
+
+def valid(key: str | None) -> bool:
+    return bool(key) and (key in SCHEMES or bool(_HEX6.match(key)))
+
+
+def scheme_of(key: str) -> Scheme:
+    """Готовая схема по ключу или схема в цветах компании, собранная из ключа."""
+    if key in SCHEMES:
+        return SCHEMES[key]
+    m = _HEX6.match(key or "")
+    if not m:
+        return SCHEMES["graphite"]
+    signal, head, highlight = (f"#{x}" for x in m.groups())
+    return Scheme(key, "Цвета компании", head, highlight, signal)
+
+
 @dataclass(frozen=True)
 class Density:
     body: float
@@ -232,7 +255,7 @@ def render_cv(v: dict, scheme: str = "graphite", one_page: bool = False, photo: 
     Возвращает (pdf, страниц).
     """
     d = ONE_PAGE if one_page else FULL
-    pdf = _Doc(SCHEMES[scheme])
+    pdf = _Doc(scheme_of(scheme))
     pdf.set_margins(d.margin, 0, d.margin)
     pdf.set_auto_page_break(True, d.margin * 0.7)
     pdf.add_page()
@@ -255,7 +278,7 @@ def render_cv(v: dict, scheme: str = "graphite", one_page: bool = False, photo: 
 def render_letter(v: dict, scheme: str = "graphite", company: str = "", position: str = "") -> bytes:
     """Письмо в одном стиле с CV: та же шапка, без фото и показателей, спокойная ширина строки."""
     d = FULL
-    pdf = _Doc(SCHEMES[scheme])
+    pdf = _Doc(scheme_of(scheme))
     pdf.set_margins(24, 0, 24)
     pdf.set_auto_page_break(True, 18)
     pdf.add_page()

@@ -29,6 +29,37 @@ async def send_message(chat_id: int, text: str) -> bool:
         await bot.session.close()
 
 
+STAGE_KINDS = {"package", "revision", "improve"}
+
+
+async def stage_done(user_id: int, kind: str, ok: bool, note: str | None = None) -> None:
+    """Сообщение в Telegram о готовности документов, собранных на сайте или в Mini App. Без Telegram ничего."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+    from app.db import SessionLocal
+
+    async with SessionLocal() as session:
+        user = await session.get(User, user_id)
+    s = get_settings()
+    if not user or not user.tg_id or not s.telegram_bot_token:
+        return
+    what = {"revision": "Правка внесена", "improve": "Документы доработаны"}.get(kind, "Документы готовы")
+    text = (f"✅ {what}. Откройте приложение, чтобы посмотреть и скачать." if ok else
+            f"⚠️ Не получилось собрать документы: {html.escape(note or 'ошибка')}. Откройте приложение и повторите.")
+    url = s.public_url.rstrip("/") + "/make"
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть", web_app=WebAppInfo(url=url))]]) \
+        if url.startswith("https://") else None
+    from app.tg import make_bot
+
+    bot = make_bot()
+    try:
+        await bot.send_message(user.tg_id, text, reply_markup=kb)
+    except Exception:  # noqa: BLE001  уведомление необязательно
+        log.warning("stage notify failed")
+    finally:
+        await bot.session.close()
+
+
 async def send_documents(chat_id: int, files: list[tuple[str, bytes]], text: str | None = None) -> bool:
     """Файлы пакета в чат с ботом. Нужен для Mini App: скачивание из окна Telegram работает плохо."""
     s = get_settings()

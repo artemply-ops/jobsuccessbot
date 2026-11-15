@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -512,7 +513,7 @@ async def target_package(target_id: int, body: TailorIn, user: User = Depends(cu
         items = tailor.normalize_items(body.items)
     except tailor.PackageError as e:
         raise HTTPException(400, str(e))
-    if body.scheme not in cv_render.SCHEMES:
+    if not cv_render.valid(body.scheme):
         raise HTTPException(400, "Неизвестная цветовая схема")
     action = tailor.billing_action(body.instruction)
     try:  # заранее: без лимита сразу экран оплаты, а не ошибка после минуты ожидания
@@ -590,7 +591,7 @@ async def set_scheme(package_id: int, body: SchemeIn, user: User = Depends(curre
                      session: AsyncSession = Depends(get_session)):
     """Смена цветовой схемы: без LLM, файлы просто перерисовываются."""
     pkg = await _own_package(session, package_id, user)
-    if body.scheme not in cv_render.SCHEMES:
+    if not cv_render.valid(body.scheme):
         raise HTTPException(400, "Неизвестная цветовая схема")
     pkg.scheme = body.scheme
     await session.commit()
@@ -607,15 +608,16 @@ async def package_file(package_id: int, item: str, accept_flags: bool = False, p
     vacancy = await session.get(Vacancy, pkg.vacancy_id)
     photo = _photo(contact)
     try:
-        data = export.render_item(pkg, contact, item, photo, accept_flags, company=vacancy.company_name,
-                                  position=vacancy.title)
+        # рендер PDF и превью занимает процессор: в отдельном потоке, чтобы не стопорить остальные запросы и бота
+        data = await asyncio.to_thread(export.render_item, pkg, contact, item, photo, accept_flags,
+                                       company=vacancy.company_name, position=vacancy.title)
     except export.FlagsNotAccepted as e:
         raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(404, str(e))
     if preview:
-        return Response(cv_render.preview_png(data), media_type="image/png")
-    name = {"cv": "resume", "one_page": "resume_one_page", "letter": "cover_letter"}[item]
+        return Response(await asyncio.to_thread(cv_render.preview_png, data), media_type="image/png")
+    name = {"cv": "resume", "one_page": "one_pager", "letter": "cover_letter"}[item]
     return Response(data, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{name}_v{pkg.version}.pdf"'})
 
@@ -637,7 +639,7 @@ async def send_to_telegram(package_id: int, body: SendIn, user: User = Depends(c
     contact = await session.get(Contact, user.id)
     vacancy = await session.get(Vacancy, pkg.vacancy_id)
     photo = _photo(contact)
-    names = {"cv": "Резюме", "one_page": "Резюме_1_страница", "letter": "Сопроводительное_письмо"}
+    names = {"cv": "Резюме", "one_page": "Одностраничник", "letter": "Сопроводительное_письмо"}
     files, skipped = [], []
     for item in [i for i in (body.items or pkg.items or []) if i in (pkg.items or [])]:
         try:
@@ -664,10 +666,50 @@ async def get_photo(user: User = Depends(current_user), session: AsyncSession = 
     return Response(photo, media_type=mt, headers={"Cache-Control": "no-store"})
 
 
+def _scheme_view(s) -> dict:
+    return {"key": s.key, "title": s.title, "head": s.head, "highlight": s.highlight, "signal": s.signal}
+
+
 @api.get("/schemes")
 async def schemes():
-    return [{"key": s.key, "title": s.title, "head": s.head, "highlight": s.highlight, "signal": s.signal}
-            for s in cv_render.SCHEMES.values()]
+    return [_scheme_view(s) for s in cv_render.SCHEMES.values()]
+
+
+@api.get("/targets/{target_id}/brand")
+async def target_brand(target_id: int, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Схема в цветах компании: цвета снимаются с сайта компании заново при каждом запросе."""
+    from app.services import brand
+
+    t, v = await _own_target(session, target_id, user)
+    domain = t.company_domain
+    if not domain:
+        return {"scheme": None, "reason": "Укажите сайт компании на шаге вакансии, и я подберу её цвета."}
+    colors = await brand.brand_colors(domain)
+    if not colors:
+        return {"scheme": None, "reason": f"Не получилось взять цвета с сайта {domain}."}
+    key = cv_render.company_key(brand.palette(colors))
+    return {"scheme": _scheme_view(cv_render.scheme_of(key)) | {"title": f"Цвета {v.company_name}"[:40]}}
+
+
+@api.get("/targets")
+async def list_targets(user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Мои вакансии: для кабинета. Последние сверху."""
+    rows = (await session.execute(select(Target, Vacancy).join(Vacancy, Vacancy.id == Target.vacancy_id)
+                                  .where(Target.user_id == user.id).order_by(Target.id.desc()).limit(100))).all()
+    pk = dict((await session.execute(select(Package.target_id, func.max(Package.id)).where(
+        Package.user_id == user.id).group_by(Package.target_id))).all())
+    return [{"id": t.id, "title": v.title, "company": v.company_name, "general": intake.is_general(t), "created_at": t.created_at.isoformat(),
+             "coverage": (t.coverage or {}).get("score"), "package_id": pk.get(t.id)} for t, v in rows]
+
+
+@api.get("/packages")
+async def list_packages(user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """Мои резюме: все версии пакетов, последние сверху."""
+    rows = (await session.execute(select(Package, Vacancy).join(Vacancy, Vacancy.id == Package.vacancy_id)
+                                  .where(Package.user_id == user.id).order_by(Package.id.desc()).limit(100))).all()
+    return [{"id": p.id, "target_id": p.target_id, "title": v.title, "company": v.company_name, "version": p.version,
+             "items": p.items or [], "created_at": p.created_at.isoformat(),
+             "coverage": (p.coverage or {}).get("score")} for p, v in rows]
 
 
 def _photo(contact: Contact | None) -> bytes | None:

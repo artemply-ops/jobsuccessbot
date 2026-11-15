@@ -158,3 +158,17 @@ async def test_merge_keeps_both_profile_histories(session):
     rows = (await session.execute(select(Profile).where(Profile.user_id == a.id).order_by(Profile.version)))\
         .scalars().all()
     assert [(p.version, p.data["v"]) for p in rows] == [(1, "a1"), (2, "b1"), (3, "a2")]  # свежий последним
+
+
+async def test_admin_stats_only_for_admin_and_counts():
+    await init_db()
+    async with _client() as c:
+        r = await c.get("/api/admin/stats")
+        assert r.status_code == 401
+        tok = (await c.post("/api/auth/dev")).json()["token"]  # в dev админка открыта (как /admin/promo)
+        r = await c.get("/api/admin/stats", headers=_h(tok))
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert len(d["series"]) == 30 and d["kpi"]["users_total"] >= 1
+        assert d["funnel"][0]["step"] == "Новые пользователи"
+        assert (await c.get("/api/admin/stats?date_from=2026-11-10&date_to=2026-11-01", headers=_h(tok))).status_code == 400

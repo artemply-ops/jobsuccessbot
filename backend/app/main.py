@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.admin_routes import router as admin_router
 from app.api.auth_routes import router as auth_router
 from app.api.billing_routes import router as billing_router
 from app.api.routes import api
@@ -51,6 +52,7 @@ app = FastAPI(title="JobPilot", lifespan=lifespan)
 app.include_router(api)
 app.include_router(billing_router)
 app.include_router(auth_router)
+app.include_router(admin_router)
 
 
 @app.exception_handler(Exception)

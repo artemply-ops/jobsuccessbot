@@ -169,7 +169,7 @@ class ClarifyQuestions(BaseModel):
 
 # ---------- Пакет под вакансию (этап 3 пивота) ----------
 
-PACKAGE_ITEMS = ("cv", "one_page", "letter")  # полное резюме, резюме на одну страницу, сопроводительное письмо
+PACKAGE_ITEMS = ("cv", "one_page", "letter")  # полное резюме, одностраничник, сопроводительное письмо
 
 
 class TailoredCV(BaseModel):

@@ -3,6 +3,10 @@ import { api, getConfig, upload, waitJob, type Cfg } from "../api";
 import type { Me } from "../App";
 import { PlanCard } from "./Billing";
 import { LoginBox, LoginMethods } from "./Auth";
+import { MyPackages, MyTargets } from "./Cabinet";
+
+// Разделы кабинета вместо одной простыни. Раздел в адресе (?tab=), чтобы ссылка открывала нужный
+const TABS: [string, string][] = [["data", "Мои данные"], ["cv", "Мои резюме"], ["jobs", "Мои вакансии"], ["plan", "Тариф и вход"]];
 
 type Source = { id: number; kind: string; filename: string | null; status: string; error: string | null; preview: string };
 type Skill = { name: string; level: string; years: number | null; source_ids: number[] };
@@ -28,6 +32,8 @@ export default function ProfilePage({ me, onMeChange }: { me: Me; onMeChange: ()
   const [edit, setEdit] = useState<ProfileData | null>(null);
   const [cfg, setCfg] = useState<Cfg | null>(null);
   const [basic, setBasic] = useState("");
+  const [tab, setTabState] = useState(() => new URLSearchParams(window.location.search).get("tab") || "data");
+  const setTab = (t: string) => { setTabState(t); window.history.replaceState(null, "", `/profile?tab=${t}`); };
   useEffect(() => { getConfig().then(setCfg).catch(() => {}); }, []);
 
   const load = useCallback(async () => {
@@ -79,10 +85,15 @@ export default function ProfilePage({ me, onMeChange }: { me: Me; onMeChange: ()
 
   return (
     <div className="stack">
-      {me.guest
-        ? <LoginBox title="Сохраните кабинет" note="Вы работаете без входа. Войдите, чтобы собрать документы и вернуться к ним с любого устройства, из бота или мини-приложения." onDone={onMeChange} />
-        : <LoginMethods onChange={onMeChange} />}
-      <PlanCard />
+      {me.guest && <LoginBox title="Сохраните кабинет" note="Вы работаете без входа. Войдите, чтобы собрать документы и вернуться к ним с любого устройства, из бота или мини-приложения." onDone={onMeChange} />}
+      <div className="cab-tabs">
+        {TABS.map(([k, t]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{t}</button>)}
+        {me.is_admin && <a href="/admin">Админка</a>}
+      </div>
+      {tab === "cv" && <MyPackages />}
+      {tab === "jobs" && <MyTargets />}
+      {tab === "plan" && <>{!me.guest && <LoginMethods onChange={onMeChange} />}<PlanCard /></>}
+      {tab === "data" && <>
       {busy && <div className="banner">{busy}</div>}
       {err && <div className="banner error">{err}</div>}
 
@@ -160,6 +171,7 @@ export default function ProfilePage({ me, onMeChange }: { me: Me; onMeChange: ()
           <button className="btn" disabled={!answer.trim() || !!busy} onClick={sendAnswer}>Отправить ответы</button>
         </section>
       )}
+      </>}
     </div>
   );
 }

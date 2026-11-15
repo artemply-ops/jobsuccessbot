@@ -55,6 +55,8 @@ async def enqueue(kind: str, user_id: int | None, fn: JobFn) -> int:
                 j.status, j.note = "error", f"Внутренняя ошибка: {type(e).__name__}"
             j.finished_at = datetime.now(timezone.utc)
             await s.commit()
+            if kind in notify.STAGE_KINDS and user_id:  # «пуш»: документы готовы, даже если окно свёрнуто
+                await notify.stage_done(user_id, kind, j.status == "done", j.note)
 
     t = asyncio.create_task(runner())
     _tasks.add(t)

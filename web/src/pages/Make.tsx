@@ -27,10 +27,10 @@ type ReviewRes = { score: number; checks: { key: string; title: string; ok: bool
 
 const ITEMS: [string, string][] = [
   ["cv", "Резюме"],
-  ["one_page", "Резюме на 1 страницу"],
+  ["one_page", "Одностраничник"],
   ["letter", "Сопроводительное письмо"],
 ];
-const FILE_NAMES: Record<string, string> = { cv: "Резюме", one_page: "Резюме_1_страница", letter: "Сопроводительное_письмо" };
+const FILE_NAMES: Record<string, string> = { cv: "Резюме", one_page: "Одностраничник", letter: "Сопроводительное_письмо" };
 const SAVE_KEY = "jp_make";
 
 function load(): { mode?: Mode; step?: Step; targetId?: number; items?: string[]; scheme?: string; packageId?: number } {
@@ -41,7 +41,21 @@ function load(): { mode?: Mode; step?: Step; targetId?: number; items?: string[]
   }
 }
 
-export default function MakePage() {
+// Уведомление браузера, когда долгий этап закончился, а вкладка свёрнута. В Telegram придёт сообщение от бота
+function notifyDone(text: string) {
+  try {
+    if (inTelegram() || !("Notification" in window) || !document.hidden || Notification.permission !== "granted") return;
+    new Notification("JobPilot", { body: text, icon: "/icon.svg" });
+  } catch { /* уведомления недоступны */ }
+}
+
+function askNotify() {
+  try {
+    if (!inTelegram() && "Notification" in window && Notification.permission === "default") Notification.requestPermission();
+  } catch { /* уведомления недоступны */ }
+}
+
+export default function MakePage({ guest = false }: { guest?: boolean }) {
   const saved = load();
   const [mode, setMode] = useState<Mode>(saved.mode || "target");
   const [step, setStep] = useState<Step>(saved.step || "start");
@@ -87,8 +101,10 @@ export default function MakePage() {
     setError("");
     setPaywall(null);
     setNeedLogin(null);
+    if (est && est >= 30) askNotify();  // разрешение спрашиваем по клику перед долгим этапом
     try {
       await fn();
+      if (est && est >= 30) notifyDone(Array.isArray(stages) ? "Готово: " + stages[stages.length - 1].toLowerCase() : "Готово");
     } catch (e) {
       if (e instanceof ApiError && e.status === 402) setPaywall(e.data?.need || "package");
       else if (e instanceof ApiError && e.status === 403 && e.data?.need === "login") setNeedLogin(() => () => run(stages, fn, est));
@@ -101,6 +117,12 @@ export default function MakePage() {
   return (
     <div className="stack">
       {step !== "start" && <Progress step={step} mode={mode} />}
+      {guest && step !== "start" && (
+        <div className="banner save-banner">
+          <span>Вы работаете без входа. Сохраните кабинет, чтобы не потерять материалы и вернуться с любого устройства.</span>
+          <button className="btn gold" onClick={() => window.dispatchEvent(new Event("jp-login"))}>Сохранить в кабинете</button>
+        </div>
+      )}
       {!ai && step !== "start" && <div className="banner">ИИ пока не подключён: материалы и вакансия сохранятся, документы соберём после подключения.</div>}
       {error && !busy && <div className="banner error">{error}</div>}
       {paywall && !busy && <Paywall need={paywall} onClose={() => setPaywall(null)} />}
@@ -119,12 +141,19 @@ export default function MakePage() {
           const r = await api<{ job_id?: number }>("/profile/build", { method: "POST", json: {} });
           if (r.job_id) await waitJob(r.job_id);
           setStep(quick ? "items" : "vacancy");
-        })} />
+        }, 30)} />
       )}
 
       {step === "vacancy" && (
         <Vacancy disabled={!!busy} onSubmit={(url, text, company_url) => run(["Читаю вакансию", "Выделяю требования", "Смотрю сайт компании", "Сравниваю с вашим профилем", "Формулирую уточнения"], async () => {
-          const t = await api<Target>("/targets", { method: "POST", json: { url: url || null, text: text || null, company_url: company_url || null } });
+          let t: Target;
+          try {
+            t = await api<Target>("/targets", { method: "POST", json: { url: url || null, text: text || null, company_url: company_url || null } });
+          } catch (e) {
+            if (!text || !(url || company_url)) throw e;
+            // сайт недоступен, а текст есть: повторяем сами, без ссылок, чтобы человеку не начинать заново
+            t = await api<Target>("/targets", { method: "POST", json: { url: null, text, company_url: null } });
+          }
           setTarget(t);
           setPackageId(undefined);
           const q = await api<{ questions: Question[] }>(`/targets/${t.id}/questions`, { method: "POST" });
@@ -175,7 +204,7 @@ export default function MakePage() {
       )}
 
       {step === "scheme" && (
-        <Schemes value={scheme} onChange={setScheme}
+        <Schemes value={scheme} onChange={setScheme} targetId={quick ? undefined : target?.id}
           onNext={() => setStep(items.some((i) => i !== "letter") ? "photo" : "result")} />
       )}
 
@@ -210,7 +239,8 @@ function Start({ onChoose }: { onChoose: (m: Mode) => void }) {
         <span className="fork-body">
           <b>Быстро собрать резюме из опыта</b>
           <span className="muted small">Надиктуйте или напишите, что делали, пришлите старое резюме, заметки, любые
-            разрозненные материалы. Соберу аккуратное резюме и версию на одну страницу.</span>
+            разрозненные материалы. Соберу аккуратное резюме и одностраничник.</span>
+          <span className="fork-time">⏱ около 2 минут: сам ИИ работает чуть больше минуты</span>
         </span>
         <span className="fork-go">→</span>
       </button>
@@ -219,7 +249,8 @@ function Start({ onChoose }: { onChoose: (m: Mode) => void }) {
         <span className="fork-body">
           <b>Подготовиться к конкретной вакансии</b>
           <span className="muted small">Пришлите вакансию: проверю, насколько ваш опыт ей соответствует, и соберу резюме,
-            резюме на одну страницу и сопроводительное письмо под её требования.</span>
+            одностраничник и сопроводительное письмо под её требования, в стиле компании.</span>
+          <span className="fork-time">⏱ 5-7 минут вместе с ответами на 2-3 вопроса</span>
         </span>
         <span className="fork-go">→</span>
       </button>
@@ -368,60 +399,56 @@ function Materials({ onNext, disabled, quick }: { onNext: () => void; disabled: 
 type Check = { ok: boolean; reason?: string; title?: string };
 
 function Vacancy({ onSubmit, disabled }: { onSubmit: (url: string, text: string, company: string) => void; disabled: boolean }) {
-  // Отдельный шаг проверки ссылки: читается ли страница. Нет: объясняем почему и просим вставить текст.
+  // Ссылка и текст можно указать вместе: тогда берём текст, а ссылку не открываем. Только ссылка: сначала проверяем,
+  // читается ли страница (не дольше 25 с). Не читается: объясняем почему и просим вставить текст.
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
   const [company, setCompany] = useState("");
   const [check, setCheck] = useState<Check | null>(null);
   const [checking, setChecking] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
-  const doCheck = async () => {
+  const next = async () => {
+    if (text.trim()) return onSubmit(url.trim(), text.trim(), company.trim());
     setChecking(true);
     setCheck(null);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 25000);
     try {
-      const c = await api<Check>("/targets/check", { method: "POST", json: { url: url.trim() } });
+      const c = await api<Check>("/targets/check", { method: "POST", json: { url: url.trim() }, signal: ctrl.signal });
       setCheck(c);
-      if (!c.ok) setTimeout(() => textRef.current?.focus(), 50);
+      if (c.ok) onSubmit(url.trim(), "", company.trim());
+      else setTimeout(() => textRef.current?.focus(), 50);
     } catch (e: any) {
-      setCheck({ ok: false, reason: e.message });
+      setCheck({ ok: false, reason: e?.name === "AbortError" ? "сайт не ответил за 25 секунд." : e.message });
+      setTimeout(() => textRef.current?.focus(), 50);
     } finally {
+      clearTimeout(timer);
       setChecking(false);
     }
   };
-  const useUrl = !!url.trim() && check?.ok && !text.trim();
   return (
-    <>
-    {checking && <Working stages={["Открываю ссылку", "Проверяю, читается ли страница"]} />}
-    <div className="card stack" hidden={checking}>
+    <div className="card stack">
       <h2>Вакансия</h2>
+      <p className="muted small">Можно ссылку, можно текст, можно и то и другое. Если есть текст, ссылку я не открываю.</p>
       <label>Ссылка на вакансию на сайте компании
-        <div className="row gap">
-          <input value={url} onChange={(e) => { setUrl(e.target.value); setCheck(null); }} placeholder="https://career.company.ru/..." />
-          <button className="btn secondary" disabled={!url.trim() || checking} onClick={doCheck}>
-            {checking ? "Проверяю…" : "Проверить"}
-          </button>
-        </div>
+        <input value={url} onChange={(e) => { setUrl(e.target.value); setCheck(null); }} placeholder="https://career.company.ru/..." />
       </label>
-      {check?.ok && <div className="banner ok">✓ Страница читается{check.title ? `: «${check.title}»` : ""}</div>}
       {check && !check.ok && (
         <div className="banner error">
           Не получилось прочитать страницу: {check.reason} <b>Скопируйте текст вакансии и вставьте его ниже.</b>
         </div>
       )}
-      <label>{check && !check.ok ? "Текст вакансии" : "или текст вакансии"}
+      <label>Текст вакансии
         <textarea ref={textRef} rows={6} value={text} onChange={(e) => setText(e.target.value)}
           className={check && !check.ok ? "attention" : ""} placeholder="Ссылки hh.ru не открываю: скопируйте текст оттуда" />
       </label>
-      <label>Сайт компании (необязательно, для миссии и ценностей в письме)
+      <label>Сайт компании (необязательно: миссия, ценности и фирменные цвета для резюме)
         <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="company.ru" />
       </label>
-      {url.trim() && !check && !text.trim() && <p className="muted small">Сначала проверьте ссылку.</p>}
-      <button className="btn" disabled={disabled || !(useUrl || text.trim())}
-        onClick={() => onSubmit(useUrl ? url.trim() : (check?.ok ? url.trim() : ""), text.trim(), company.trim())}>
-        Дальше
+      <button className="btn" disabled={disabled || checking || !(url.trim() || text.trim())} onClick={next}>
+        {checking ? <><span className="spinner sm" /> Открываю ссылку…</> : "Дальше"}
       </button>
     </div>
-    </>
   );
 }
 
@@ -445,27 +472,51 @@ function Answers({ target, onSubmit, onSkip, disabled }: { target: Target; onSub
   );
 }
 
-function Schemes({ value, onChange, onNext }: { value: string; onChange: (k: string) => void; onNext: () => void }) {
+// Схема в цветах компании: цвета снимаются с её сайта заново при каждом показе (GET /targets/{id}/brand)
+function useBrand(targetId?: number) {
+  const [brand, setBrand] = useState<{ scheme: Scheme | null; reason?: string } | null>(null);
+  useEffect(() => {
+    if (!targetId) return;
+    setBrand(null);
+    api<{ scheme: Scheme | null; reason?: string }>(`/targets/${targetId}/brand`).then(setBrand)
+      .catch(() => setBrand({ scheme: null, reason: "Не получилось подобрать цвета компании." }));
+  }, [targetId]);
+  return { brand, loading: !!targetId && brand === null };
+}
+
+function SchemeCard({ s, on, onClick }: { s: Scheme; on: boolean; onClick: () => void }) {
+  return (
+    <button className={`scheme ${on ? "on" : ""}`} onClick={onClick}>
+      <span className="sheet">
+        <span className="stripe" style={{ background: s.signal }} />
+        <span className="head" style={{ background: s.head }}>
+          <span className="nm" />
+          <span className="hl" style={{ background: s.highlight }} />
+        </span>
+        <span className="body" />
+      </span>
+      <span className="small">{s.key.startsWith("company-") ? "🎨 " : ""}{s.title.split(" (")[0]}</span>
+    </button>
+  );
+}
+
+function Schemes({ value, onChange, onNext, targetId }: { value: string; onChange: (k: string) => void; onNext: () => void; targetId?: number }) {
   const [list, setList] = useState<Scheme[]>([]);
+  const { brand, loading } = useBrand(targetId);
   useEffect(() => { api<Scheme[]>("/schemes").then(setList).catch(() => {}); }, []);
+  useEffect(() => { if (brand?.scheme && !value.startsWith("company-")) onChange(brand.scheme.key); }, [brand]);
   return (
     <div className="card stack">
       <h2>Цветовая схема</h2>
       <div className="schemes">
-        {list.map((s) => (
-          <button key={s.key} className={`scheme ${s.key === value ? "on" : ""}`} onClick={() => onChange(s.key)}>
-            <span className="sheet">
-              <span className="stripe" style={{ background: s.signal }} />
-              <span className="head" style={{ background: s.head }}>
-                <span className="nm" />
-                <span className="hl" style={{ background: s.highlight }} />
-              </span>
-              <span className="body" />
-            </span>
-            <span className="small">{s.title.split(" (")[0]}</span>
-          </button>
-        ))}
+        {loading && (
+          <div className="scheme ph-scheme"><span className="sheet center-ph"><span className="spinner" /></span>
+            <span className="small muted">Подбираю цвета компании…</span></div>
+        )}
+        {brand?.scheme && <SchemeCard s={brand.scheme} on={brand.scheme.key === value} onClick={() => onChange(brand.scheme!.key)} />}
+        {list.map((s) => <SchemeCard key={s.key} s={s} on={s.key === value} onClick={() => onChange(s.key)} />)}
       </div>
+      {brand && !brand.scheme && brand.reason && <p className="muted small">🎨 {brand.reason}</p>}
       <button className="btn" onClick={onNext}>Дальше</button>
     </div>
   );
@@ -570,18 +621,19 @@ function Result(props: {
   const loadPkg = async (id: number) => {
     const p = await api<Pkg>(`/packages/${id}`);
     setPkg(p);
-    const out: Record<string, string> = {};
+    setPreviews({});
     for (const it of p.items) {
       const letterBlocked = it === "letter" && p.flags.some((f) => f.where !== "cv");
       if (letterBlocked) continue;
       try {
         const b = await api<Blob>(`/packages/${id}/file/${it}?preview=true`);
-        out[it] = URL.createObjectURL(b);
+        const u = URL.createObjectURL(b);
+        setPreviews((prev) => ({ ...prev, [it]: u }));
       } catch { /* превью необязательно */ }
     }
-    setPreviews(out);
   };
 
+  const { brand } = useBrand(target.general ? undefined : target.id);
   useEffect(() => { api<Scheme[]>("/schemes").then(setSchemes).catch(() => {}); }, []);
   useEffect(() => {  // письмо с неподтверждёнными фактами показываем только после явного согласия
     if (!accept || !pkg?.items.includes("letter")) return;
@@ -623,7 +675,8 @@ function Result(props: {
             <div key={it} className="preview">
               {previews[it] ? <img src={previews[it]} alt="" /> : (
                 <div className="ph muted small">
-                  {it === "letter" && letterFlags.length > 0 && !accept ? "Письмо ждёт подтверждения" : "Превью готовится"}
+                  {it === "letter" && letterFlags.length > 0 && !accept ? "Письмо ждёт подтверждения"
+                    : <><span className="spinner" /><span className="dots-text">Готовлю превью</span></>}
                 </div>
               )}
               <button className={`btn ${inTelegram() ? "secondary" : ""}`}
@@ -650,12 +703,15 @@ function Result(props: {
       <div className="card stack">
         <h2>Цветовая схема</h2>
         <div className="row gap wrap">
-          {schemes.map((s) => (
+          {[...(brand?.scheme ? [brand.scheme] : []),
+            ...(pkg.scheme.startsWith("company-") && brand?.scheme?.key !== pkg.scheme
+              ? [{ key: pkg.scheme, title: "Цвета компании", head: "", highlight: "", signal: "" }] : []),
+            ...schemes].map((s) => (
             <button key={s.key} className={`btn ${s.key === pkg.scheme ? "" : "secondary"}`} disabled={!!busy}
               onClick={() => run(["Перерисовываю документы"], async () => {
                 await api(`/packages/${pkg.id}`, { method: "PATCH", json: { scheme: s.key } });
                 await loadPkg(pkg.id);
-              })}>{s.title.split(" (")[0]}</button>
+              })}>{s.key.startsWith("company-") ? "🎨 " : ""}{s.title.split(" (")[0]}</button>
           ))}
         </div>
       </div>

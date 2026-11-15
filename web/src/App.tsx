@@ -7,6 +7,7 @@ import MakePage from "./pages/Make";
 import Landing from "./pages/Landing";
 import { Offer, Privacy } from "./pages/Legal";
 import { PayReturn } from "./pages/Billing";
+import AdminPage from "./pages/Admin";
 
 // Страницы без входа: юридические тексты нужны ЮKassa и пользователю до оплаты
 const PUBLIC: Record<string, React.ComponentType> = { "/offer": Offer, "/privacy": Privacy };
@@ -46,9 +47,15 @@ export default function App() {
       });
     const onLogout = () => setState("anon");
     const onMe = () => loadMe();  // вход внутри приложения (гость вошёл): обновить шапку и профиль
+    const onLogin = () => setLoginOpen(true);  // «Сохранить в кабинете» из мастера
     window.addEventListener("jp-logout", onLogout);
     window.addEventListener("jp-me", onMe);
-    return () => { window.removeEventListener("jp-logout", onLogout); window.removeEventListener("jp-me", onMe); };
+    window.addEventListener("jp-login", onLogin);
+    return () => {
+      window.removeEventListener("jp-logout", onLogout);
+      window.removeEventListener("jp-me", onMe);
+      window.removeEventListener("jp-login", onLogin);
+    };
   }, [loadMe]);
 
   const { pathname } = useLocation();
@@ -63,24 +70,26 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <a href="/make" className="logo"><span className="logo-mark">J</span>JobPilot</a>
+        <a href="/make" className="logo" onClick={() => { try { localStorage.removeItem("jp_make"); } catch { /* */ } }}>
+          <span className="logo-mark">J</span>JobPilot</a>
         {!inTelegram() && (me?.guest
-          ? <button className="btn ghost" onClick={() => setLoginOpen(true)}>Войти</button>
+          ? <button className="btn gold" onClick={() => setLoginOpen(true)}>Сохранить в кабинете</button>
           : <button className="link" onClick={() => { setToken(null); setState("anon"); }}>Выйти</button>)}
       </header>
       <main className="content">
         <Routes>
           <Route path="/" element={<Navigate to="/make" replace />} />
-          <Route path="/make" element={<MakePage />} />
+          <Route path="/make" element={<MakePage guest={!!me?.guest} />} />
           <Route path="/profile" element={<ProfilePage me={me!} onMeChange={loadMe} />} />
           <Route path="/pay/return" element={<PayReturn />} />
+          {me?.is_admin && <Route path="/admin" element={<AdminPage />} />}
           <Route path="*" element={<Navigate to="/make" replace />} />
         </Routes>
       </main>
       <nav className="tabbar">
         {/* Пивот 08.11: поиск вакансий и каталог компаний скрыты (pages/Vacancies, Vacancy, Companies не подключены) */}
         <NavLink to="/make">Резюме</NavLink>
-        <NavLink to="/profile">Профиль</NavLink>
+        <NavLink to="/profile">Кабинет</NavLink>
       </nav>
       {loginOpen && (
         <div className="modal" onClick={(e) => { if (e.target === e.currentTarget) setLoginOpen(false); }}>
