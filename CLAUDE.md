@@ -15,6 +15,7 @@ MVP: блок 1 (профиль кандидата), блок 2 (поиск и �
   `api/billing_routes.py`, `bot/billing_flow.py`, `web/src/pages/Billing.tsx`, лендинг `Landing.tsx`, оферта `Legal.tsx`
 - `services/accounts.py` один кабинет на сайт, Mini App и бота: гость, код на почту, Яндекс ID (выключен), объединение
   кабинетов; `api/auth_routes.py`, `web/src/pages/Auth.tsx`. Палитра сайта «зелёный + золото» в `styles.css`
+- `docs/BACKLOG.md` блокеры, техдолг и продуктовый бэклог (новые идеи владельца записывать сюда)
 - `docs/ARCHITECTURE.md` где что менять, `docs/ECONOMICS.md` цены, себестоимость, маржа (цель выше 60%)
 
 ## Жёсткие правила
