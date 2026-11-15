@@ -20,6 +20,7 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_add_missing_columns)
+        await conn.run_sync(_widen_columns)
 
 
 def _add_missing_columns(conn) -> None:
@@ -35,6 +36,16 @@ def _add_missing_columns(conn) -> None:
             if col.name not in have and col.nullable:
                 ddl = col.type.compile(dialect=conn.dialect)
                 conn.exec_driver_sql(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ddl}')
+
+
+def _widen_columns(conn) -> None:
+    """15.11.2026: users.tg_id из INTEGER в BIGINT (id Telegram бывают больше 2^31). Только Postgres, SQLite не нужно."""
+    if conn.dialect.name != "postgresql":
+        return
+    t = conn.exec_driver_sql("select data_type from information_schema.columns "
+                             "where table_name='users' and column_name='tg_id'").scalar()
+    if t == "integer":
+        conn.exec_driver_sql("ALTER TABLE users ALTER COLUMN tg_id TYPE BIGINT")
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

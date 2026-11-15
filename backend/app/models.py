@@ -6,7 +6,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -19,11 +19,52 @@ def now() -> datetime:
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
-    tg_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
+    tg_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True)  # id Telegram бывают больше 2^31
     username: Mapped[str | None] = mapped_column(String(64))
     first_name: Mapped[str | None] = mapped_column(String(128))
     consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notify_threshold: Mapped[int] = mapped_column(Integer, default=75)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # Гость: начал работу на сайте без входа. Скачать документы может только после входа (services/accounts.py)
+    guest: Mapped[bool | None] = mapped_column(Boolean)
+
+
+class Identity(Base):
+    """Способ входа кроме Telegram: почта, Яндекс ID. Telegram живёт в users.tg_id.
+    У одного пользователя может быть несколько способов, все ведут в один кабинет."""
+
+    __tablename__ = "identities"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(16))  # email | yandex
+    subject: Mapped[str] = mapped_column(String(256))  # почта в нижнем регистре или id Яндекса
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (UniqueConstraint("provider", "subject"),)
+
+
+class LoginCode(Base):
+    """Одноразовый код входа по почте. Хранится только хэш кода и хэш адреса."""
+
+    __tablename__ = "login_codes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email_hash: Mapped[str] = mapped_column(String(64), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class LoginToken(Base):
+    """Одноразовая ссылка: вход на сайт из бота (/web), возврат с Яндекс ID, привязка способа входа."""
+
+    __tablename__ = "login_tokens"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    purpose: Mapped[str] = mapped_column(String(16))  # login | link
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 

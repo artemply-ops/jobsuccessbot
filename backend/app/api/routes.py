@@ -7,8 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import jobs
-from app.auth import (AuthError, current_user, issue_token, upsert_tg_user, verify_login_widget,
-                      verify_webapp_init_data)
+from app.auth import AuthError, current_user, issue_token, upsert_tg_user, verify_webapp_init_data
 from app.config import get_settings
 from app.db import get_session
 from app.models import (Company, CompanyScore, CompanySubscription, Contact, Job, Package, Source, Target, User,
@@ -40,17 +39,6 @@ async def auth_webapp(body: WebAppAuth, session: AsyncSession = Depends(get_sess
     return {"token": issue_token(user)}
 
 
-@api.post("/auth/telegram-login")
-async def auth_login(body: dict, session: AsyncSession = Depends(get_session)):
-    try:
-        tg = verify_login_widget(body, get_settings().telegram_bot_token)
-    except AuthError as e:
-        raise HTTPException(401, f"Telegram: {e}")
-    user = await upsert_tg_user(session, int(tg["id"]), tg.get("username"), tg.get("first_name"))
-    await session.commit()
-    return {"token": issue_token(user)}
-
-
 @api.post("/auth/dev")
 async def auth_dev(session: AsyncSession = Depends(get_session)):
     if get_settings().env != "dev":
@@ -63,8 +51,11 @@ async def auth_dev(session: AsyncSession = Depends(get_session)):
 @api.get("/config")
 async def public_config():
     s = get_settings()
+    from app.services import mailer
+
     return {"bot_username": s.telegram_bot_username, "dev_login": s.env == "dev",
-            "ai": llm.available(), "voice": stt_available()}
+            "ai": llm.available(), "voice": stt_available(),
+            "login": {"email": mailer.available() or s.env == "dev", "yandex": bool(s.yandex_client_id)}}
 
 
 # ---------- Пользователь ----------
@@ -84,6 +75,7 @@ class SettingsIn(BaseModel):
 async def me(user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     c = await session.get(Contact, user.id)
     return {"id": user.id, "first_name": user.first_name, "consent": user.consent_at is not None,
+            "guest": bool(user.guest), "telegram": user.tg_id is not None,
             "notify_threshold": user.notify_threshold, "is_admin": user.tg_id in get_settings().admin_tg_ids,
             "contact": {"full_name": c.full_name, "email": c.email, "phone": c.phone, "city": c.city} if c else None}
 
@@ -123,6 +115,13 @@ def _search_on() -> None:
 def _need_consent(user: User):
     if user.consent_at is None:
         raise HTTPException(403, "Нужно согласие на обработку персональных данных")
+
+
+def _need_member(user: User):
+    """Гость (сайт без входа) готовит материалы и вакансию, а документы собирает и скачивает после входа."""
+    if user.guest:
+        raise HTTPException(403, {"message": "Войдите, чтобы собрать документы. Всё, что вы загрузили, сохранится",
+                                  "need": "login"})
 
 
 # ---------- Источники и профиль ----------
@@ -469,6 +468,7 @@ async def improve_package(package_id: int, body: ImproveIn, user: User = Depends
                           session: AsyncSession = Depends(get_session)):
     """Перегенерировать с учётом пробелов покрытия. Не тратит ручную правку, до 2 раз на вакансию."""
     _need_consent(user)
+    _need_member(user)
     pkg = await _own_package(session, package_id, user)
     if not pkg.target_id:
         raise HTTPException(400, "Этот пакет собран по старой схеме")
@@ -504,6 +504,7 @@ async def review_resume(user: User = Depends(current_user), session: AsyncSessio
 async def target_package(target_id: int, body: TailorIn, user: User = Depends(current_user),
                          session: AsyncSession = Depends(get_session)):
     _need_consent(user)
+    _need_member(user)
     t, _ = await _own_target(session, target_id, user)
     if not llm.available():
         return {"stub": True, "message": str(llm.AINotConnected("Генерация резюме и письма"))}
@@ -600,6 +601,7 @@ async def set_scheme(package_id: int, body: SchemeIn, user: User = Depends(curre
 async def package_file(package_id: int, item: str, accept_flags: bool = False, preview: bool = False,
                        user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     """Документ пакета: item = cv | one_page | letter. preview=true отдаёт PNG первой страницы."""
+    _need_member(user)
     pkg = await _own_package(session, package_id, user)
     contact = await session.get(Contact, user.id)
     vacancy = await session.get(Vacancy, pkg.vacancy_id)
@@ -715,6 +717,7 @@ async def delete_photo(user: User = Depends(current_user), session: AsyncSession
 @api.get("/packages/{package_id}/{fmt}")
 async def download(package_id: int, fmt: str, accept_flags: bool = False, user: User = Depends(current_user),
                    session: AsyncSession = Depends(get_session)):
+    _need_member(user)
     pkg = await _own_package(session, package_id, user)
     contact = await session.get(Contact, user.id)
     try:

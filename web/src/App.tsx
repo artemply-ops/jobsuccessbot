@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api, inTelegram, login, setToken } from "./api";
+import { LoginBox } from "./pages/Auth";
 import ProfilePage from "./pages/Profile";
 import MakePage from "./pages/Make";
 import Landing from "./pages/Landing";
@@ -14,6 +15,8 @@ export type Me = {
   id: number;
   first_name: string | null;
   consent: boolean;
+  guest: boolean;  // начал на сайте без входа: документы соберёт после входа
+  telegram: boolean;
   notify_threshold: number;
   is_admin: boolean;
   contact: { full_name: string | null; email: string | null; phone: string | null; city: string | null } | null;
@@ -23,6 +26,7 @@ export default function App() {
   const [state, setState] = useState<"loading" | "anon" | "ready">("loading");
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState("");
+  const [loginOpen, setLoginOpen] = useState(false);
 
   const loadMe = useCallback(async () => {
     try {
@@ -41,8 +45,10 @@ export default function App() {
         setState("anon");
       });
     const onLogout = () => setState("anon");
+    const onMe = () => loadMe();  // вход внутри приложения (гость вошёл): обновить шапку и профиль
     window.addEventListener("jp-logout", onLogout);
-    return () => window.removeEventListener("jp-logout", onLogout);
+    window.addEventListener("jp-me", onMe);
+    return () => { window.removeEventListener("jp-logout", onLogout); window.removeEventListener("jp-me", onMe); };
   }, [loadMe]);
 
   const { pathname } = useLocation();
@@ -50,17 +56,17 @@ export default function App() {
   if (Pub) return <div className="content"><Pub /><p><a href="/">← JobPilot</a></p></div>;
   if (state === "loading") return <div className="center muted">Загрузка…</div>;
   if (state === "anon") return inTelegram()
-    ? <Login onDone={loadMe} error={error} />
-    : <div className="content"><Landing login={<Login onDone={loadMe} error={error} compact />} /></div>;
-  if (me && !me.consent) return <Consent onDone={loadMe} />;
+    ? <div className="center narrow">{error && <p className="error">{error}</p>}<LoginBox onDone={loadMe} /></div>
+    : <Landing onAuthed={loadMe} />;
+  if (me && !me.consent) return <Consent onDone={loadMe} onCancel={me.guest ? () => { setToken(null); setState("anon"); } : undefined} />;
 
   return (
     <div className="app">
       <header className="topbar">
-        <span className="brand">JobPilot</span>
-        {!inTelegram() && (
-          <button className="link" onClick={() => { setToken(null); setState("anon"); }}>Выйти</button>
-        )}
+        <a href="/make" className="logo"><span className="logo-mark">J</span>JobPilot</a>
+        {!inTelegram() && (me?.guest
+          ? <button className="btn ghost" onClick={() => setLoginOpen(true)}>Войти</button>
+          : <button className="link" onClick={() => { setToken(null); setState("anon"); }}>Выйти</button>)}
       </header>
       <main className="content">
         <Routes>
@@ -76,61 +82,20 @@ export default function App() {
         <NavLink to="/make">Резюме</NavLink>
         <NavLink to="/profile">Профиль</NavLink>
       </nav>
+      {loginOpen && (
+        <div className="modal" onClick={(e) => { if (e.target === e.currentTarget) setLoginOpen(false); }}>
+          <div className="modal-body">
+            <button className="modal-close" aria-label="Закрыть" onClick={() => setLoginOpen(false)}>×</button>
+            <LoginBox onDone={() => { setLoginOpen(false); loadMe(); }} title="Войдите, чтобы сохранить работу"
+              note="Всё, что вы уже загрузили, останется в кабинете." />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function Login({ onDone, error, compact }: { onDone: () => void; error: string; compact?: boolean }) {
-  const [cfg, setCfg] = useState<{ bot_username: string; dev_login: boolean } | null>(null);
-  const [err, setErr] = useState(error);
-  const widgetRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    api("/config").then(setCfg).catch(() => setCfg({ bot_username: "", dev_login: false }));
-  }, []);
-
-  useEffect(() => {
-    if (!cfg?.bot_username || !widgetRef.current) return;
-    window.onTelegramAuth = async (user) => {
-      try {
-        const { token } = await api("/auth/telegram-login", { method: "POST", json: user });
-        setToken(token);
-        onDone();
-      } catch (e: any) {
-        setErr(e.message);
-      }
-    };
-    const s = document.createElement("script");
-    s.src = "https://telegram.org/js/telegram-widget.js?22";
-    s.async = true;
-    s.setAttribute("data-telegram-login", cfg.bot_username);
-    s.setAttribute("data-size", "large");
-    s.setAttribute("data-onauth", "onTelegramAuth(user)");
-    s.setAttribute("data-request-access", "write");
-    widgetRef.current.innerHTML = "";
-    widgetRef.current.appendChild(s);
-  }, [cfg, onDone]);
-
-  const dev = async () => {
-    const { token } = await api("/auth/dev", { method: "POST" });
-    setToken(token);
-    onDone();
-  };
-
-  return (
-    <div className={compact ? "stack" : "center stack narrow"}>
-      {!compact && <img src="/icon.svg" width={64} height={64} alt="" />}
-      {!compact && <h1>JobPilot</h1>}
-      {!compact && <p className="muted">Резюме, резюме на одну страницу и сопроводительное письмо под конкретную вакансию.</p>}
-      <div ref={widgetRef} />
-      {cfg && !cfg.bot_username && !cfg.dev_login && <p className="muted">Вход через Telegram ещё не настроен.</p>}
-      {cfg?.dev_login && <button className="btn secondary" onClick={dev}>Войти (локальная разработка)</button>}
-      {err && <p className="error">{err}</p>}
-    </div>
-  );
-}
-
-function Consent({ onDone }: { onDone: () => void }) {
+function Consent({ onDone, onCancel }: { onDone: () => void; onCancel?: () => void }) {
   const accept = async () => {
     await api("/me/consent", { method: "POST" });
     onDone();
@@ -143,7 +108,9 @@ function Consent({ onDone }: { onDone: () => void }) {
         голосовые сообщения. Данные хранятся в России. Во внешнюю ИИ-модель уходит только обезличенный текст, без
         имени и контактов.
       </p>
+      <p className="small">Подробно: <a href="/privacy" target="_blank">политика обработки персональных данных</a>.</p>
       <button className="btn" onClick={accept}>Согласен</button>
+      {onCancel && <button className="link" onClick={onCancel}>Вернуться на главную</button>}
     </div>
   );
 }

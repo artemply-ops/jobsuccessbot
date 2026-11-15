@@ -93,11 +93,30 @@ export async function download(path: string, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export type Cfg = { bot_username: string; dev_login: boolean; ai: boolean; voice: boolean };
+export type Cfg = { bot_username: string; dev_login: boolean; ai: boolean; voice: boolean;
+  login: { email: boolean; yandex: boolean } };
 let cfgPromise: Promise<Cfg> | null = null;
 export const getConfig = () => (cfgPromise ??= api<Cfg>("/config"));
 
+// Одноразовая ссылка из бота (/web) или возврат с Яндекс ID: ?login=<токен>. Гость на сайте вливается в кабинет
+async function linkLogin(): Promise<void> {
+  const url = new URL(window.location.href);
+  const t = url.searchParams.get("login");
+  if (!t) return;
+  url.searchParams.delete("login");
+  window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+  const { token } = await api<{ token: string }>("/auth/token", { method: "POST", json: { token: t } });
+  setToken(token);
+}
+
+// Начать на сайте без входа: гостевая учётка, документы собираются после входа
+export async function startGuest(): Promise<void> {
+  const { token } = await api<{ token: string }>("/auth/guest", { method: "POST" });
+  setToken(token);
+}
+
 export async function login(): Promise<boolean> {
+  await linkLogin();
   if (getToken()) return true;
   const w = tg();
   if (w?.initData) {

@@ -55,7 +55,7 @@ HELP = (
     "4. Получите резюме, резюме на одну страницу и письмо в одном стиле.\n\n"
     "Первый пакет и одна правка бесплатно, дальше по тарифу: /plan. Проверка резюме бесплатна всегда.\n\n"
     "/start начать заново · /new новая вакансия · /check проверить резюме · /contacts ФИО и контакты · "
-    "/plan тариф · /promo промокод"
+    "/plan тариф · /promo промокод · /web кабинет на сайте"
 )
 STUB = "🤖 <i>{what} работает на ИИ, а ИИ пока не подключён.</i>"
 BASIC_ASK = ("Чтобы уже сейчас искать вакансии, напишите одной строкой должность и город, можно ещё зарплату "
@@ -63,7 +63,7 @@ BASIC_ASK = ("Чтобы уже сейчас искать вакансии, на
 # Пивот 08.11: в меню только сценарий резюме. /search, /vacancies, /companies, /profile работают, но скрыты
 COMMANDS = [("start", "Сделать резюме"), ("new", "Новая вакансия"), ("check", "Проверить резюме"),
             ("contacts", "Контакты для резюме"), ("plan", "Тариф и оплата"), ("promo", "Ввести промокод"),
-            ("help", "Помощь")]
+            ("web", "Кабинет на сайте"), ("help", "Помощь")]
 
 
 def web_url(path: str = "") -> str | None:
@@ -153,6 +153,26 @@ async def on_consent(cb: CallbackQuery, state: FSMContext):
 @dp.message(Command("help"))
 async def help_cmd(message: Message):
     await message.answer(HELP)
+
+
+@dp.message(Command("web"))
+async def web_cmd(message: Message):
+    """Одноразовая ссылка на сайт с уже выполненным входом: тот же кабинет, что в боте."""
+    from app.services import accounts
+
+    url = web_url()
+    if not url:
+        await message.answer("Сайт пока недоступен.")
+        return
+    user = await get_user(message.from_user)
+    async with SessionLocal() as s:
+        token = await accounts.issue_link_token(s, user)
+        await s.commit()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть кабинет на сайте",
+                                                                     url=f"{url.rstrip('/')}/?login={token}")]])
+    await message.answer("Ссылка действует 15 минут и только один раз. На сайте будет тот же кабинет: профиль, "
+                         "пакеты и тариф. Войти на сайте можно и самому: через Telegram или по почте, "
+                         "если привязали её в профиле.", reply_markup=kb)
 
 
 @dp.message(Command("contacts"))

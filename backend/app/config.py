@@ -68,6 +68,17 @@ class Settings(BaseSettings):
     legal_status: str = ""  # «самозанятый (НПД)» или «ИП»
     support_email: str = ""
 
+    # Вход на сайт без Telegram (services/accounts.py). Письма с кодом через любой SMTP (Яндекс 360, Unisender Go и т.п.)
+    smtp_host: str = ""  # пусто: вход по почте выключен (в dev код пишется в лог и отдаётся в ответе)
+    smtp_port: int = 465  # 465 SSL, 587 STARTTLS
+    smtp_user: str = ""
+    smtp_password: str = ""
+    mail_from: str = ""  # например «JobPilot <noreply@job-pilot.ru>»; пусто: берётся smtp_user
+    # Яндекс ID: код готов, включается заполнением ключей приложения с oauth.yandex.ru
+    yandex_client_id: str = ""
+    yandex_client_secret: str = ""
+    guests_per_ip_day: int = 20  # защита от накрутки гостевых учёток
+
     # Скоринг
     prefilter_top_n: int = 50
     notify_threshold: int = 75

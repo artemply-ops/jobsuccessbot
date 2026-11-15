@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getConfig, upload, waitJob, type Cfg } from "../api";
 import type { Me } from "../App";
 import { PlanCard } from "./Billing";
+import { LoginBox, LoginMethods } from "./Auth";
 
 type Source = { id: number; kind: string; filename: string | null; status: string; error: string | null; preview: string };
 type Skill = { name: string; level: string; years: number | null; source_ids: number[] };
@@ -78,6 +79,9 @@ export default function ProfilePage({ me, onMeChange }: { me: Me; onMeChange: ()
 
   return (
     <div className="stack">
+      {me.guest
+        ? <LoginBox title="Сохраните кабинет" note="Вы работаете без входа. Войдите, чтобы собрать документы и вернуться к ним с любого устройства, из бота или мини-приложения." onDone={onMeChange} />
+        : <LoginMethods onChange={onMeChange} />}
       <PlanCard />
       {busy && <div className="banner">{busy}</div>}
       {err && <div className="banner error">{err}</div>}

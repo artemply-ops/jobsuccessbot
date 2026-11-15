@@ -73,6 +73,16 @@ def issue_token(user: User) -> str:
     return jwt.encode({"sub": str(user.id), "exp": exp}, s.jwt_secret, algorithm="HS256")
 
 
+async def optional_user(request: Request, session: AsyncSession = Depends(get_session)) -> User | None:
+    """Кто уже вошёл, если вошёл: при входе другим способом кабинеты связываются, а не создаётся новый."""
+    if not request.headers.get("Authorization", "").startswith("Bearer "):
+        return None
+    try:
+        return await current_user(request, session)
+    except HTTPException:
+        return None
+
+
 async def current_user(request: Request, session: AsyncSession = Depends(get_session)) -> User:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):

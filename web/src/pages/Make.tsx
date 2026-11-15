@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, download, getConfig, inTelegram, upload, waitJob, type Cfg } from "../api";
 import { Paywall } from "./Billing";
+import { LoginBox } from "./Auth";
 import { VoiceRecorder } from "./Profile";
 
 type Mode = "quick" | "target";
@@ -52,6 +53,8 @@ export default function MakePage() {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [paywall, setPaywall] = useState<string | null>(null);  // лимит закончился: что именно (package | revision)
+  // Гость на сайте дошёл до сборки документов: вход, затем то же действие повторяется само
+  const [needLogin, setNeedLogin] = useState<null | (() => void)>(null);
   const [ai, setAi] = useState(true);
   const quick = mode === "quick";
   const itemList = quick ? ITEMS.filter(([k]) => k !== "letter") : ITEMS;  // без вакансии письмо писать не о чем
@@ -83,10 +86,12 @@ export default function MakePage() {
     setBusy((Array.isArray(stages) ? stages.join("|") : stages) + (est ? `#${est}` : ""));
     setError("");
     setPaywall(null);
+    setNeedLogin(null);
     try {
       await fn();
     } catch (e) {
       if (e instanceof ApiError && e.status === 402) setPaywall(e.data?.need || "package");
+      else if (e instanceof ApiError && e.status === 403 && e.data?.need === "login") setNeedLogin(() => () => run(stages, fn, est));
       else setError(e instanceof ApiError || e instanceof Error ? e.message : "Ошибка");
     } finally {
       setBusy("");
@@ -99,6 +104,10 @@ export default function MakePage() {
       {!ai && step !== "start" && <div className="banner">ИИ пока не подключён: материалы и вакансия сохранятся, документы соберём после подключения.</div>}
       {error && !busy && <div className="banner error">{error}</div>}
       {paywall && !busy && <Paywall need={paywall} onClose={() => setPaywall(null)} />}
+      {needLogin && !busy && (
+        <LoginBox title="Осталось войти" note="Документы готовы к сборке. Войдите, и они соберутся в вашем кабинете: всё, что вы загрузили, сохранится. Зайти потом можно будет с сайта, из бота или мини-приложения."
+          onDone={() => { const retry = needLogin; setNeedLogin(null); window.dispatchEvent(new Event("jp-me")); retry(); }} />
+      )}
       {busy && <Working key={busy} stages={busy.split("#")[0].split("|")} est={Number(busy.split("#")[1]) || undefined} />}
 
       {/* На время обработки форма шага скрыта, но не размонтирована: при ошибке введённое на месте */}

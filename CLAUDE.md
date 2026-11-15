@@ -13,6 +13,8 @@ MVP: блок 1 (профиль кандидата), блок 2 (поиск и �
 - `data/companies_seed.yaml` посевной каталог компаний
 - `services/billing.py` цены, лимиты, промокоды (единственное место цен), `services/payments.py` ЮKassa и Stars,
   `api/billing_routes.py`, `bot/billing_flow.py`, `web/src/pages/Billing.tsx`, лендинг `Landing.tsx`, оферта `Legal.tsx`
+- `services/accounts.py` один кабинет на сайт, Mini App и бота: гость, код на почту, Яндекс ID (выключен), объединение
+  кабинетов; `api/auth_routes.py`, `web/src/pages/Auth.tsx`. Палитра сайта «зелёный + золото» в `styles.css`
 - `docs/ARCHITECTURE.md` где что менять, `docs/ECONOMICS.md` цены, себестоимость, маржа (цель выше 60%)
 
 ## Жёсткие правила
