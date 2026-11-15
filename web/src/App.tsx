@@ -74,10 +74,14 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <a href="/make" className="logo" onClick={() => { try { localStorage.removeItem("jp_make"); } catch { /* */ } }}>
-          <span className="logo-mark">J</span>JobPilot</a>
+        {/* Гость (начал без входа) уходит логотипом на главную: иначе ему туда не попасть, пока не вошёл */}
+        {me?.guest && !inTelegram()
+          ? <a href="/site" className="logo"><span className="logo-mark">J</span>JobPilot</a>
+          : <a href="/make" className="logo" onClick={() => { try { localStorage.removeItem("jp_make"); } catch { /* */ } }}>
+              <span className="logo-mark">J</span>JobPilot</a>}
         {!inTelegram() && (me?.guest
-          ? <button className="btn gold" onClick={() => setLoginOpen(true)}>Сохранить в кабинете</button>
+          ? <span className="row gap"><a className="link" href="/site">← На главную</a>
+              <button className="btn gold" onClick={() => setLoginOpen(true)}>Сохранить в кабинете</button></span>
           : <button className="link" onClick={async () => {
               await disablePush().catch(() => {});  // чужие пуши на общем компьютере не нужны
               setToken(null); setState("anon");

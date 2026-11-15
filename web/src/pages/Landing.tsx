@@ -4,7 +4,7 @@
 // Цены и реквизиты приходят с сервера (/api/billing/public) и подставляются в тексты вместо {week}, {month}...
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, startGuest } from "../api";
+import { api, getToken, startGuest } from "../api";
 import { LoginBox } from "./Auth";
 import type { Product } from "./Billing";
 
@@ -47,7 +47,10 @@ export default function Landing({ onAuthed }: { onAuthed: () => void }) {
 
   const start = async () => {
     setBusy(true); setErr("");
-    try { await startGuest(); onAuthed(); } catch (e: any) { setErr(e.message); setLogin(true); } finally { setBusy(false); }
+    try {
+      if (!getToken()) await startGuest();  // уже начатая работа (гость вернулся на главную) не теряется
+      onAuthed();
+    } catch (e: any) { setErr(e.message); setLogin(true); } finally { setBusy(false); }
   };
   if (!t) return <div className="site center"><span className="spinner" /></div>;
   const Cta = ({ big }: { big?: boolean }) => (
