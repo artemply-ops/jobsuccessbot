@@ -1,14 +1,14 @@
 import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import jobs
-from app.auth import AuthError, current_user, issue_token, upsert_tg_user, verify_webapp_init_data
+from app.auth import AuthError, current_user, issue_token, source_hint, upsert_tg_user, verify_webapp_init_data
 from app.config import get_settings
 from app.db import get_session
 from app.models import (Company, CompanyScore, CompanySubscription, Contact, Job, Package, Source, Target, User,
@@ -30,14 +30,22 @@ class WebAppAuth(BaseModel):
 
 
 @api.post("/auth/telegram-webapp")
-async def auth_webapp(body: WebAppAuth, session: AsyncSession = Depends(get_session)):
+async def auth_webapp(body: WebAppAuth, request: Request, session: AsyncSession = Depends(get_session)):
     try:
         tg = verify_webapp_init_data(body.init_data, get_settings().telegram_bot_token)
     except AuthError as e:
         raise HTTPException(401, f"Telegram: {e}")
-    user = await upsert_tg_user(session, int(tg["id"]), tg.get("username"), tg.get("first_name"))
+    user = await upsert_tg_user(session, int(tg["id"]), tg.get("username"), tg.get("first_name"),
+                                _start_param(body.init_data) or source_hint(request))
     await session.commit()
     return {"token": issue_token(user)}
+
+
+def _start_param(init_data: str) -> str | None:
+    """startapp из ссылки t.me/<бот>/<app>?startapp=<метка>: приходит в подписанной initData."""
+    from urllib.parse import parse_qsl
+
+    return dict(parse_qsl(init_data, keep_blank_values=True)).get("start_param") or None
 
 
 @api.post("/auth/dev")

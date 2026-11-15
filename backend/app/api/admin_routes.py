@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.billing_routes import _admin
 from app.db import get_session
+from app.services import attribution
 from app.models import (BillingUsage, Identity, Job, LlmUsage, Package, Payment, Profile, PromoRedemption, Target,
                         User)
 
@@ -81,11 +82,11 @@ async def stats(date_from: date | None = None, date_to: date | None = None, _: U
             durations[kind].append((fin - at).total_seconds())
 
     # Пользователи и каналы
-    users = (await session.execute(select(User.id, User.created_at, User.tg_id, User.guest, User.consent_at)
-                                   .where(period(User.created_at)))).all()
+    users = (await session.execute(select(User.id, User.created_at, User.tg_id, User.guest, User.consent_at,
+                                          User.source).where(period(User.created_at)))).all()
     email_ids = set((await session.execute(select(Identity.user_id).where(Identity.provider == "email"))).scalars())
     channels = Counter()
-    for uid, at, tg, guest, _c in users:
+    for uid, at, tg, guest, _c, _src in users:
         series[_day(at)]["new_users"] += 1
         channels["Гость (сайт)" if guest else "Telegram" if tg else "Почта" if uid in email_ids else "Другое"] += 1
     new_ids = [u[0] for u in users]
@@ -98,6 +99,7 @@ async def stats(date_from: date | None = None, date_to: date | None = None, _: U
     with_profile, with_target, with_pkg = await has(Profile), await has(Target), await has(Package)
     paid_ids = set((await session.execute(select(Payment.user_id).where(Payment.status == "succeeded",
                                                                         Payment.user_id.in_(new_ids or [0])))).scalars())
+    sources = await _sources(session, users, with_profile, with_pkg, paid_ids)
     funnel = [("Новые пользователи", len(users)), ("Дали согласие", sum(1 for u in users if u[4])),
               ("Собрали профиль", len(with_profile)), ("Добавили вакансию", len(with_target)),
               ("Получили документы", len(with_pkg)), ("Оплатили", len(paid_ids))]
@@ -138,5 +140,30 @@ async def stats(date_from: date | None = None, date_to: date | None = None, _: U
         "durations": {k: {"runs": len(v), "avg_s": round(sum(v) / len(v)), "max_s": round(max(v))}
                       for k, v in durations.items()},
         "channels": dict(channels), "funnel": [{"step": s, "users": n} for s, n in funnel],
-        "billed": billed, "errors": sorted(errors, key=lambda e: e["at"], reverse=True)[:15],
+        "billed": billed, "sources": sources, "errors": sorted(errors, key=lambda e: e["at"], reverse=True)[:15],
     }
+
+
+async def _sources(session: AsyncSession, users, with_profile: set[int], with_pkg: set[int],
+                   paid_ids: set[int]) -> list[dict]:
+    """Когорта новых за период по меткам источника: сколько пришло, дошло до профиля и документов, заплатило
+    и сколько принесло денег за всё время (оплаты не ограничены периодом, иначе поздняя оплата потеряется)."""
+    by_user = {u[0]: u[5] for u in users}
+    money: dict[int, Counter] = defaultdict(Counter)
+    if by_user:
+        for uid, cur, amount in (await session.execute(
+                select(Payment.user_id, Payment.currency, Payment.amount)
+                .where(Payment.status == "succeeded", Payment.user_id.in_(list(by_user))))).all():
+            money[uid][cur] += amount or 0
+    rows: dict[str, Counter] = defaultdict(Counter)
+    for uid, src in by_user.items():
+        r = rows[src or ""]
+        r["users"] += 1
+        r["profile"] += uid in with_profile
+        r["documents"] += uid in with_pkg
+        r["paid"] += uid in paid_ids
+        r["revenue_rub"] += money[uid]["RUB"]
+        r["revenue_stars"] += money[uid]["XTR"]
+    out = [{"source": s or "direct", "channel": attribution.channel(s), **{k: int(v) for k, v in c.items()},
+            "paid_rate": round(c["paid"] / c["users"], 3) if c["users"] else 0} for s, c in rows.items()]
+    return sorted(out, key=lambda r: (-r["users"], r["source"]))

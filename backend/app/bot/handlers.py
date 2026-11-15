@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (BotCommand, BufferedInputFile, CallbackQuery, ErrorEvent, InlineKeyboardButton,
@@ -76,9 +76,9 @@ def webapp_kb(path: str, text: str) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=text, web_app=WebAppInfo(url=url))]]) if url else None
 
 
-async def get_user(msg_from) -> User:
+async def get_user(msg_from, source: str | None = None) -> User:
     async with SessionLocal() as s:
-        u = await upsert_tg_user(s, msg_from.id, msg_from.username, msg_from.first_name)
+        u = await upsert_tg_user(s, msg_from.id, msg_from.username, msg_from.first_name, source)
         await s.commit()
     llm.track(user_id=u.id)  # учёт токенов: чей запрос
     return u
@@ -131,9 +131,10 @@ async def report_error(message: Message, e: Exception):
 # ---------- Старт и согласие ----------
 
 @dp.message(CommandStart())
-async def start(message: Message, state: FSMContext):
+async def start(message: Message, state: FSMContext, command: CommandObject | None = None):
     await state.clear()
-    user = await get_user(message.from_user)
+    # t.me/<бот>?start=<метка>: источник для нового пользователя (services/attribution.py)
+    user = await get_user(message.from_user, command.args if command else None)
     if await need_consent(message, user):
         return
     await cv_flow.start_flow(message, state)

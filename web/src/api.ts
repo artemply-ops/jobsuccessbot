@@ -28,6 +28,24 @@ export function setToken(t: string | null) {
   }
 }
 
+// Источник первого касания: ?src= или utm_source[/utm_campaign] на сайте, startapp в Mini App.
+// Хранится в браузере до входа, уходит заголовком X-JP-Source; бэкенд ставит его только новому кабинету
+const SRC_KEY = "jp_src";
+const cleanSrc = (s: string | null | undefined) =>
+  (s || "").trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_.-]/g, "").slice(0, 64);
+
+function captureSource(): string {
+  let saved = "";
+  try { saved = localStorage.getItem(SRC_KEY) || ""; } catch { /* приватный режим */ }
+  if (saved) return saved;
+  const q = new URLSearchParams(window.location.search);
+  const utm = [q.get("utm_source"), q.get("utm_campaign")].filter(Boolean).join("_");
+  const src = cleanSrc(q.get("src") || q.get("ref") || utm || tg()?.initDataUnsafe?.start_param);
+  if (src) { try { localStorage.setItem(SRC_KEY, src); } catch { /* */ } }
+  return src;
+}
+const SOURCE = captureSource();
+
 export class ApiError extends Error {
   // data: машинные поля ответа, например { need: "package" } при 402 (нужна оплата)
   constructor(public status: number, message: string, public data: any = null) {
@@ -39,6 +57,7 @@ export async function api<T = any>(path: string, opts: RequestInit & { json?: un
   const headers: Record<string, string> = { ...(opts.headers as Record<string, string>) };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
+  if (SOURCE) headers["X-JP-Source"] = SOURCE;
   let body = opts.body;
   if (opts.json !== undefined) {
     headers["Content-Type"] = "application/json";

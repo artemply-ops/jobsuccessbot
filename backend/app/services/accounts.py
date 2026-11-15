@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import Base
+from app.services import attribution
 from app.models import (BillingUsage, CompanyScore, Contact, Grant, Identity, LlmUsage, LoginCode, LoginToken,
                         Profile, User, VacancyScore)
 
@@ -64,7 +65,7 @@ def is_guest(user: User) -> bool:
 _guest_hits: dict[str, list[float]] = defaultdict(list)
 
 
-async def create_guest(session: AsyncSession, ip: str) -> User:
+async def create_guest(session: AsyncSession, ip: str, source: str | None = None) -> User:
     """Гостевая учётка для работы на сайте без входа. Ограничение по IP от накрутки бесплатных действий."""
     day = time.time() - 86400
     hits = [t for t in _guest_hits[ip] if t > day]
@@ -73,6 +74,7 @@ async def create_guest(session: AsyncSession, ip: str) -> User:
     hits.append(time.time())
     _guest_hits[ip] = hits
     user = User(guest=True, notify_threshold=get_settings().notify_threshold)
+    attribution.assign(user, source)
     session.add(user)
     await session.flush()
     return user
@@ -133,7 +135,8 @@ async def use_link_token(session: AsyncSession, token: str, purpose: str = "logi
 
 # ---------- Вход и привязка ----------
 
-async def login_identity(session: AsyncSession, provider: str, subject: str, current: User | None) -> User:
+async def login_identity(session: AsyncSession, provider: str, subject: str, current: User | None,
+                         source: str | None = None) -> User:
     """Вход по почте или Яндекс ID. current: кто уже вошёл (гость или пользователь Mini App, который привязывает
     способ входа). Возвращает учётку, под которой человек продолжит работу."""
     found = (await session.execute(select(Identity).where(Identity.provider == provider,
@@ -143,6 +146,7 @@ async def login_identity(session: AsyncSession, provider: str, subject: str, cur
         return await _join(session, current, owner)
     user = current or User(notify_threshold=get_settings().notify_threshold)
     if current is None:
+        attribution.assign(user, source)
         session.add(user)
         await session.flush()
     session.add(Identity(user_id=user.id, provider=provider, subject=subject))
@@ -152,14 +156,14 @@ async def login_identity(session: AsyncSession, provider: str, subject: str, cur
 
 
 async def login_telegram(session: AsyncSession, tg_id: int, username: str | None, first_name: str | None,
-                         current: User | None) -> User:
+                         current: User | None, source: str | None = None) -> User:
     """Вход через Telegram на сайте (виджет). Если человек уже вошёл (гость или по почте), Telegram привязывается
     к его кабинету; если у этого Telegram был свой кабинет, кабинеты объединяются."""
     from app.auth import upsert_tg_user
 
     owner = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
     if current is None or owner is not None and owner.id == current.id:
-        return await upsert_tg_user(session, tg_id, username, first_name)
+        return await upsert_tg_user(session, tg_id, username, first_name, source)
     if owner is None:
         if current.tg_id and current.tg_id != tg_id:
             raise AccountError("К этому кабинету уже привязан другой Telegram")
@@ -199,6 +203,9 @@ async def merge(session: AsyncSession, keep: User, drop: User) -> None:
         return
     if keep.tg_id and drop.tg_id and keep.tg_id != drop.tg_id:
         raise AccountError("Оба кабинета привязаны к разным Telegram. Объединить их нельзя")
+    # Источник: остаётся метка более раннего кабинета (первое касание)
+    older, newer = sorted((keep, drop), key=lambda u: (u.created_at is None, u.created_at or datetime.min, u.id))
+    keep.source = older.source or newer.source
     await session.flush()
 
     # Профили: обе истории сохраняются версиями, порядок по времени создания, актуальная самая свежая

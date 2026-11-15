@@ -14,7 +14,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import AuthError, current_user, issue_token, optional_user, verify_login_widget
+from app.auth import AuthError, current_user, issue_token, optional_user, source_hint, verify_login_widget
 from app.config import get_settings
 from app.db import get_session
 from app.models import User
@@ -36,7 +36,7 @@ def _ip(request: Request) -> str:
 async def guest(request: Request, session: AsyncSession = Depends(get_session)):
     """Начать на сайте без входа. Документы гость собирает после входа, всё загруженное переедет в кабинет."""
     try:
-        user = await accounts.create_guest(session, _ip(request))
+        user = await accounts.create_guest(session, _ip(request), source_hint(request))
     except accounts.AccountError as e:
         raise HTTPException(429, str(e))
     await session.commit()
@@ -76,11 +76,11 @@ async def email_start(body: EmailIn, session: AsyncSession = Depends(get_session
 
 
 @router.post("/email/verify")
-async def email_verify(body: CodeIn, current: User | None = Depends(optional_user),
+async def email_verify(body: CodeIn, request: Request, current: User | None = Depends(optional_user),
                        session: AsyncSession = Depends(get_session)):
     try:
         email = await accounts.check_code(session, body.email, body.code)
-        user = await accounts.login_identity(session, "email", email, current)
+        user = await accounts.login_identity(session, "email", email, current, source_hint(request))
     except accounts.AccountError as e:
         await session.commit()  # счётчик неверных попыток
         raise _err(e)
@@ -89,13 +89,13 @@ async def email_verify(body: CodeIn, current: User | None = Depends(optional_use
 
 
 @router.post("/telegram-login")
-async def telegram_login(body: dict, current: User | None = Depends(optional_user),
+async def telegram_login(body: dict, request: Request, current: User | None = Depends(optional_user),
                          session: AsyncSession = Depends(get_session)):
     """Telegram Login Widget на сайте: вход или привязка Telegram к уже открытому кабинету."""
     try:
         tg = verify_login_widget(body, get_settings().telegram_bot_token)
         user = await accounts.login_telegram(session, int(tg["id"]), tg.get("username"), tg.get("first_name"),
-                                             current)
+                                             current, source_hint(request))
     except AuthError as e:
         raise HTTPException(401, f"Telegram: {e}")
     except accounts.AccountError as e:

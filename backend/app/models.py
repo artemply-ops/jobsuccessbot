@@ -27,6 +27,8 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     # Гость: начал работу на сайте без входа. Скачать документы может только после входа (services/accounts.py)
     guest: Mapped[bool | None] = mapped_column(Boolean)
+    # Метка первого касания: откуда пришёл (services/attribution.py). Только код ссылки, без данных человека
+    source: Mapped[str | None] = mapped_column(String(64))
 
 
 class Identity(Base):

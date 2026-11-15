@@ -55,11 +55,20 @@ def verify_login_widget(data: dict, bot_token: str) -> dict:
     return data
 
 
-async def upsert_tg_user(session: AsyncSession, tg_id: int, username: str | None, first_name: str | None) -> User:
+def source_hint(request: Request) -> str | None:
+    """Метка источника от сайта и Mini App (заголовок X-JP-Source, web/src/api.ts). Учитывается только для нового кабинета."""
+    return request.headers.get("X-JP-Source")
+
+
+async def upsert_tg_user(session: AsyncSession, tg_id: int, username: str | None, first_name: str | None,
+                         source: str | None = None) -> User:
+    from app.services import attribution
+
     user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
     if user is None:
         user = User(tg_id=tg_id, username=username, first_name=first_name,
                     notify_threshold=get_settings().notify_threshold)
+        attribution.assign(user, source)
         session.add(user)
     else:
         user.username, user.first_name = username or user.username, first_name or user.first_name
