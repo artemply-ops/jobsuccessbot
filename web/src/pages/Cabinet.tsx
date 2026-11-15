@@ -76,3 +76,31 @@ export function MyTargets() {
     </div>
   );
 }
+
+// Уведомления в браузер о готовых документах, даже когда сайт закрыт
+export function PushCard() {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [msg, setMsg] = useState("");
+  useEffect(() => { import("../push").then((p) => (p.pushSupported() ? p.pushEnabled().then(setOn) : setOn(null))); }, []);
+  const toggle = async () => {
+    const p = await import("../push");
+    setMsg("");
+    if (on) { await p.disablePush(); setOn(false); return; }
+    const r = await p.enablePush().catch(() => "off" as const);
+    if (r === "on") setOn(true);
+    else setMsg(r === "denied" ? "Браузер запретил уведомления. Разрешите их в настройках сайта (значок замка в адресной строке)."
+      : r === "unsupported" ? "Этот браузер не поддерживает уведомления." : "Уведомления пока не подключены.");
+  };
+  if (on === null) return null;
+  return (
+    <div className="card stack small-gap">
+      <div className="row between gap wrap">
+        <h2>Уведомления в браузере</h2>
+        <button className={`btn ${on ? "secondary" : ""}`} onClick={toggle}>{on ? "Выключить" : "Включить"}</button>
+      </div>
+      <p className="muted small">Сообщим, когда документы готовы, даже если сайт закрыт. В уведомлении нет ваших данных.
+        На iPhone работает, если сайт добавлен на экран «Домой».</p>
+      {msg && <p className="error small">{msg}</p>}
+    </div>
+  );
+}

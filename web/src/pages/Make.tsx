@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError, download, getConfig, inTelegram, upload, waitJob, type Cfg } from "../api";
 import { Paywall } from "./Billing";
 import { LoginBox } from "./Auth";
+import { offerPush } from "../push";
 import { VoiceRecorder } from "./Profile";
 
 type Mode = "quick" | "target";
@@ -39,20 +40,6 @@ function load(): { mode?: Mode; step?: Step; targetId?: number; items?: string[]
   } catch {
     return {};
   }
-}
-
-// Уведомление браузера, когда долгий этап закончился, а вкладка свёрнута. В Telegram придёт сообщение от бота
-function notifyDone(text: string) {
-  try {
-    if (inTelegram() || !("Notification" in window) || !document.hidden || Notification.permission !== "granted") return;
-    new Notification("JobPilot", { body: text, icon: "/icon.svg" });
-  } catch { /* уведомления недоступны */ }
-}
-
-function askNotify() {
-  try {
-    if (!inTelegram() && "Notification" in window && Notification.permission === "default") Notification.requestPermission();
-  } catch { /* уведомления недоступны */ }
 }
 
 export default function MakePage({ guest = false }: { guest?: boolean }) {
@@ -101,10 +88,9 @@ export default function MakePage({ guest = false }: { guest?: boolean }) {
     setError("");
     setPaywall(null);
     setNeedLogin(null);
-    if (est && est >= 30) askNotify();  // разрешение спрашиваем по клику перед долгим этапом
+    if (est && est >= 30) offerPush();  // пуш о готовности, даже если закроют сайт; разрешение спрашиваем по клику
     try {
       await fn();
-      if (est && est >= 30) notifyDone(Array.isArray(stages) ? "Готово: " + stages[stages.length - 1].toLowerCase() : "Готово");
     } catch (e) {
       if (e instanceof ApiError && e.status === 402) setPaywall(e.data?.need || "package");
       else if (e instanceof ApiError && e.status === 403 && e.data?.need === "login") setNeedLogin(() => () => run(stages, fn, est));

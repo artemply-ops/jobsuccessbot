@@ -68,7 +68,7 @@ export default function Landing({ onAuthed }: { onAuthed: () => void }) {
         <div className="container hero-grid">
           <div className="stack hero-text">
             <span className="eyebrow">Резюме за 2 минуты, под вакансию за 5-7</span>
-            <h1>Резюме, которое зовут на собеседование</h1>
+            <h1>Ваш реальный опыт на языке работодателя</h1>
             <p className="lead">Пришлите старое резюме или расскажите об опыте голосом, добавьте вакансию. Получите резюме,
               одностраничник и сопроводительное письмо, собранные под требования работодателя.</p>
             <div className="row gap wrap"><Cta big /><button className="btn ghost big" onClick={() => setLogin(true)}>У меня есть кабинет</button></div>

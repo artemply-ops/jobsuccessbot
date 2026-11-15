@@ -68,6 +68,18 @@ class LoginToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class PushSubscription(Base):
+    """Подписка браузера на Web Push (services/push.py). В пуше только «документы готовы», без ПДн."""
+
+    __tablename__ = "push_subscriptions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    endpoint: Mapped[str] = mapped_column(String(1024), unique=True)
+    p256dh: Mapped[str] = mapped_column(String(256))
+    auth: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class Contact(Base):
     """Хранилище ПДн. Никогда не передаётся во внешние сервисы целиком."""
 

@@ -691,6 +691,42 @@ async def target_brand(target_id: int, user: User = Depends(current_user), sessi
     return {"scheme": _scheme_view(cv_render.scheme_of(key)) | {"title": f"Цвета {v.company_name}"[:40]}}
 
 
+class PushIn(BaseModel):
+    endpoint: str
+    keys: dict = {}
+
+
+@api.get("/push/key")
+async def push_key():
+    """Публичный ключ VAPID для подписки браузера. Пусто: пуши выключены."""
+    from app.services import push
+
+    return {"key": get_settings().vapid_public_key if push.available() else None}
+
+
+@api.post("/push/subscribe")
+async def push_subscribe(body: PushIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    from app.services import push
+
+    if not push.available():
+        raise HTTPException(503, "Уведомления пока не подключены")
+    try:
+        await push.subscribe(session, user, body.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    await session.commit()
+    return {"ok": True}
+
+
+@api.post("/push/unsubscribe")
+async def push_unsubscribe(body: PushIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    from app.services import push
+
+    await push.unsubscribe(session, user, body.endpoint)
+    await session.commit()
+    return {"ok": True}
+
+
 @api.get("/targets")
 async def list_targets(user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     """Мои вакансии: для кабинета. Последние сверху."""

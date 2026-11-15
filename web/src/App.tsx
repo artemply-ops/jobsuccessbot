@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api, inTelegram, login, setToken } from "./api";
 import { LoginBox } from "./pages/Auth";
+import { disablePush } from "./push";
 import ProfilePage from "./pages/Profile";
 import MakePage from "./pages/Make";
 import Landing from "./pages/Landing";
@@ -74,7 +75,10 @@ export default function App() {
           <span className="logo-mark">J</span>JobPilot</a>
         {!inTelegram() && (me?.guest
           ? <button className="btn gold" onClick={() => setLoginOpen(true)}>Сохранить в кабинете</button>
-          : <button className="link" onClick={() => { setToken(null); setState("anon"); }}>Выйти</button>)}
+          : <button className="link" onClick={async () => {
+              await disablePush().catch(() => {});  // чужие пуши на общем компьютере не нужны
+              setToken(null); setState("anon");
+            }}>Выйти</button>)}
       </header>
       <main className="content">
         <Routes>

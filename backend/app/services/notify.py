@@ -33,17 +33,24 @@ STAGE_KINDS = {"package", "revision", "improve"}
 
 
 async def stage_done(user_id: int, kind: str, ok: bool, note: str | None = None) -> None:
-    """Сообщение в Telegram о готовности документов, собранных на сайте или в Mini App. Без Telegram ничего."""
+    """Готовность документов, собранных на сайте или в Mini App: Web Push в браузер и сообщение в Telegram."""
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
     from app.db import SessionLocal
 
+    from app.services import push
+
+    what = {"revision": "Правка внесена", "improve": "Документы доработаны"}.get(kind, "Документы готовы")
     async with SessionLocal() as session:
         user = await session.get(User, user_id)
+        try:  # Web Push в браузер, даже закрытый. Текст общий, без ПДн
+            await push.send(session, user_id, f"JobPilot: {what.lower()}" if ok else "JobPilot: не получилось",
+                            "Откройте, чтобы посмотреть и скачать." if ok else "Откройте и повторите.")
+        except Exception:  # noqa: BLE001  пуш необязателен
+            log.warning("web push failed")
     s = get_settings()
     if not user or not user.tg_id or not s.telegram_bot_token:
         return
-    what = {"revision": "Правка внесена", "improve": "Документы доработаны"}.get(kind, "Документы готовы")
     text = (f"✅ {what}. Откройте приложение, чтобы посмотреть и скачать." if ok else
             f"⚠️ Не получилось собрать документы: {html.escape(note or 'ошибка')}. Откройте приложение и повторите.")
     url = s.public_url.rstrip("/") + "/make"

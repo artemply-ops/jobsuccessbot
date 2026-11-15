@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     yandex_client_secret: str = ""
     guests_per_ip_day: int = 20  # защита от накрутки гостевых учёток
 
+    # Web Push при закрытом браузере (services/push.py). Ключи генерирует scripts/gen_vapid.py прямо в .env на сервере
+    vapid_public_key: str = ""  # base64url, отдаётся браузеру
+    vapid_private_key: str = ""  # base64url DER, только на сервере
+
     # Скоринг
     prefilter_top_n: int = 50
     notify_threshold: int = 75
