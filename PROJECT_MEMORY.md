@@ -1,7 +1,7 @@
 # PROJECT_MEMORY — JobPilot
 
 > Создан: 28.09.2026
-> Последнее обновление: 29.09.2026
+> Последнее обновление: 17.11.2026
 
 ## ⚙️ Конфигурация
 - Obsidian MCP: не подключён, память ведётся только здесь
@@ -15,9 +15,9 @@
 
 ## 🏗 Стек и архитектура
 - Backend: Python 3.12, FastAPI, SQLAlchemy async; SQLite локально, PostgreSQL в проде (docker-compose)
-- Бот: aiogram 3, отдельный процесс, общая БД
+- Бот: aiogram 3, в проде в процессе API (RUN_BOT_IN_API=true), локально можно отдельно
 - Фронт: Vite + React 19 + TS + vite-plugin-pwa; одна сборка для PWA и Telegram Mini App
-- LLM: Claude через anthropic SDK 1.8, structured outputs. claude-opus-5 для профиля, досье, CV; claude-sonnet-5 для массового скоринга
+- LLM: OpenRouter (OpenAI-совместимый API, ответ по JSON-схеме), модели в .env: LLM_MODEL_MAIN (Sonnet 5.5), LLM_MODEL_SCORING (Haiku 5.5). С 16.10 Claude API напрямую не используем
 - STT: Yandex SpeechKit v1 (синхронный, до 30 с), PyAV для перекодирования браузерного аудио в OGG/Opus
 - Фоновые задачи: asyncio в процессе + таблица jobs (позже Arq + Redis)
 
@@ -261,3 +261,10 @@
   и без записей за 30 дней удаляется целиком с файлами; llm_usage остаётся без user_id, Company.added_by обнуляется.
 - Т1 минимум: jobs.fail_interrupted при старте (если RUN_SCHEDULER) помечает queued/running ошибкой и шлёт уведомление.
   Очередь Arq + Redis остаётся в Т1/Р7. Тесты tests/test_cleanup.py, всего 87/87.
+- Выкачено de086ec. На проде: cron deploy `15 3 * * *` стоит, первый дамп 10:24 UTC (база 164 КБ, файлы 392 КБ),
+  восстановление в временную базу restore_check сверено с продом: 2 users, 3 jobs, 3 profiles, 24 таблицы, совпало.
+  Чистка гостей на старте: удалено 0. Зависших задач не было (jobs: done 3).
+- Урок: `ssh ... 'bash -s' < script` + `docker compose exec -T` внутри: exec съедает остаток скрипта из stdin.
+  Скрипт класть файлом на сервер и запускать с </dev/null.
+- docs/user-flow.html (не мой, неотслеживаемый) добавлен в .git/info/exclude, иначе deploy.sh отказывается.
+  Если он нужен в репозитории: убрать строку из exclude и закоммитить.
