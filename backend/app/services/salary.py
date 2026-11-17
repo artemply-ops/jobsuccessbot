@@ -80,9 +80,10 @@ async def estimate(role: str, city: str | None = None) -> dict:
     if hit and time.monotonic() - hit[0] < TTL:
         return hit[1]
     found = None
-    # API «Работы России» нестабилен (17.11.2026: limit=100 отдавал 500, limit=5 отвечал за 14 с): меньшими порциями
-    async with httpx.AsyncClient(timeout=20) as client:
-        for limit in (100, 50, 25):
+    # API «Работы России» медленный и нестабильный (17.11.2026 с сервера: limit=5 за 15 с, limit=100 за 17 с,
+    # limit=50 за 22 с, бывает 500). Размер порции на время почти не влияет, поэтому таймаут большой, повтор один
+    async with httpx.AsyncClient(timeout=45) as client:
+        for limit in (100, 50):
             try:
                 found = await trudvsem.search(role, limit, client=client)
                 break
