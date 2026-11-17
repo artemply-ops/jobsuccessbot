@@ -1,4 +1,4 @@
-"""Тексты лендинга, которые владелец правит в админке без выкатки.
+"""Тексты лендинга и бота (П9), которые владелец правит в админке без выкатки.
 
 Структура (какие блоки и поля есть) задаётся здесь, в SCHEMA и DEFAULTS. Админка меняет только значения.
 Каждое сохранение это новая версия (site_text_versions), откат к любой из последних 30. Цены в тексты не пишутся:
@@ -6,6 +6,8 @@
 из services/billing.py, чтобы цены на сайте не расходились с офертой и оплатой.
 """
 
+import re
+import time
 from copy import deepcopy
 
 from sqlalchemy import select
@@ -85,7 +87,18 @@ SCHEMA = [
         {"key": "telegram", "label": "Строка про Telegram (перед ссылкой на бота)", "type": "line"},
         {"key": "footnote", "label": "Сноска о сравнении цен", "type": "text"},
     ]},
+    {"key": "bot", "title": "Бот: тексты сообщений", "fields": [
+        {"key": "consent", "label": "Первое сообщение и согласие на обработку данных", "type": "text"},
+        {"key": "start", "label": "Шаг 1: пришлите материалы", "type": "text"},
+        {"key": "path", "label": "Развилка: быстро или под вакансию", "type": "text"},
+        {"key": "role", "label": "Быстрый путь: вопрос о желаемой должности", "type": "text"},
+        {"key": "vacancy", "label": "Шаг 2: пришлите вакансию", "type": "text"},
+        {"key": "items", "label": "Выбор документов", "type": "text"},
+        {"key": "done", "label": "Документы готовы", "type": "line"},
+        {"key": "help", "label": "Помощь (/help)", "type": "text"},
+    ]},
 ]
+
 
 DEFAULTS = {
     "hero": {
@@ -218,6 +231,32 @@ DEFAULTS = {
         "telegram": "Удобнее в Telegram? Откройте бота, кабинет тот же.",
         "footnote": "* Сравнение с тарифами ближайшего по функциям сервиса подготовки резюме на 15.11.2026.",
     },
+    "bot": {
+        "consent": "Привет! Я сделаю резюме, сопроводительное письмо и профиль LinkedIn из вашего опыта: быстро "
+                   "или под конкретную вакансию.\n\nДля этого мне нужно обрабатывать ваши персональные данные: "
+                   "резюме, контакты, голосовые сообщения. Данные хранятся в России. Во внешнюю ИИ-модель уходит "
+                   "только обезличенный текст, без имени и контактов.\n\nСогласны на обработку персональных данных?",
+        "start": "<b>Шаг 1.</b> Пришлите ваше резюме: файл (PDF, DOCX), скан или фото. Можно добавить рассказ о себе "
+                 "текстом или голосовыми: чем занимались, какие результаты с цифрами.\n\n"
+                 "Когда всё пришлёте, нажмите «Готово».",
+        "path": "Как будем делать?\n\n<b>⚡ Резюме из опыта</b>: около 2 минут, без вакансии. Наведу порядок в "
+                "опыте и подам его сильно.\n<b>🎯 Под вакансию</b>: 5-7 минут. Разберу требования, задам 2-3 "
+                "вопроса, напишу письмо и сообщение менеджеру, покажу, сколько требований закрыто.",
+        "role": "Какую должность ищете? Напишите одной строкой, например <code>Руководитель отдела продаж</code>. "
+                "Или нажмите «Пропустить»: соберу резюме под вашу основную профессию.",
+        "vacancy": "<b>Шаг 2.</b> Пришлите ссылку на вакансию на сайте компании или вставьте её текст.\n"
+                   "<i>Ссылки hh.ru я не открываю: оттуда скопируйте текст.</i>",
+        "items": "Что подготовить? Отметьте нужное.",
+        "done": "Готово. Что дальше?",
+        "help": "<b>Как пользоваться</b>\n"
+                "1. Пришлите резюме: файл, скан или фото. Можно добавить рассказ о себе текстом или голосом.\n"
+                "2. Выберите путь: быстрое резюме из опыта или под конкретную вакансию (ссылка или текст).\n"
+                "3. Выберите документы: резюме, одностраничник, письмо, сообщение менеджеру, профиль LinkedIn.\n"
+                "4. Получите файлы в PDF и Word и тексты, которые можно сразу скопировать.\n\n"
+                "Первый пакет и одна правка бесплатно, дальше по тарифу: /plan. Проверка резюме бесплатна всегда.\n\n"
+                "/start начать заново · /new новая вакансия · /check проверить резюме · /contacts ФИО и контакты · "
+                "/plan тариф · /promo промокод · /web кабинет на сайте",
+    },
 }
 
 
@@ -258,12 +297,21 @@ def warnings(data: dict) -> list[str]:
                 walk(x, f"{path}[{i}]")
 
     walk(data, "")
+    for k, v in (data.get("bot") or {}).items():  # бот шлёт HTML: чужой тег или незакрытый сломает сообщение
+        bad = sorted(set(re.findall(r"</?([a-zA-Z]+)", v)) - BOT_TAGS)
+        if bad:
+            out.append(f"bot.{k}: тег {', '.join(bad)} бот не поддерживает, сообщение уйдёт текстом по умолчанию")
+        for tag in BOT_TAGS:
+            if len(re.findall(rf"<{tag}\b", v)) != len(re.findall(rf"</{tag}>", v)):
+                out.append(f"bot.{k}: тег <{tag}> не закрыт, сообщение уйдёт текстом по умолчанию")
     if len(data.get("hero", {}).get("title", "")) > 70:
         out.append("hero.title: слоган длиннее 70 знаков, на телефоне займёт много строк")
     return out
 
 
 async def save(session: AsyncSession, data: dict, user_id: int) -> SiteTextVersion:
+    global _bot_cache
+    _bot_cache = (0.0, None)  # бот увидит новые тексты сразу, а не через минуту
     if (await session.execute(select(SiteTextVersion.id).limit(1))).first() is None:
         session.add(SiteTextVersion(data=deepcopy(DEFAULTS), created_by=None))  # исходные тексты: к ним можно вернуться
         await session.flush()
@@ -287,3 +335,34 @@ async def restore(session: AsyncSession, version_id: int, user_id: int) -> SiteT
     if row is None:
         raise ValueError("Версия не найдена")
     return await save(session, row.data, user_id)
+
+
+# ---------- П9: тексты бота ----------
+
+BOT_TAGS = {"b", "i", "u", "s", "code", "a"}  # что понимает Telegram в режиме HTML
+_bot_cache: tuple[float, dict | None] = (0.0, None)
+
+
+async def bot_text(key: str) -> str:
+    """Текст бота из админки, кэш на минуту (бот спрашивает на каждом шаге). Ошибка БД: текст по умолчанию."""
+    global _bot_cache
+    if _bot_cache[1] is None or time.monotonic() - _bot_cache[0] > 60:
+        from app.db import SessionLocal
+
+        try:
+            async with SessionLocal() as s:
+                data, _ = await current(s)
+            _bot_cache = (time.monotonic(), data["bot"])
+        except Exception:
+            return DEFAULTS["bot"][key]
+    return _bot_cache[1].get(key) or DEFAULTS["bot"][key]
+
+
+async def bot_answer(message, key: str, **kw):
+    """Отправить текст бота. Если владелец сломал разметку, Telegram откажет: тогда текст по умолчанию."""
+    from aiogram.exceptions import TelegramBadRequest
+
+    try:
+        return await message.answer(await bot_text(key), **kw)
+    except TelegramBadRequest:
+        return await message.answer(DEFAULTS["bot"][key], **kw)

@@ -444,6 +444,17 @@ async def add_general_target(body: GeneralIn, user: User = Depends(current_user)
     return intake.view(t, await session.get(Vacancy, t.vacancy_id))
 
 
+@api.get("/targets/{target_id}/salary")
+async def target_salary(target_id: int, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+    """П6: ориентир по зарплате из открытых данных «Работы России», с датой и источником."""
+    from app.services import salary
+
+    t, v = await _own_target(session, target_id, user)
+    prof = await profile.latest_profile(session, user.id)
+    role, city = salary.role_and_city(t, v, prof.data if prof else None)
+    return await salary.estimate(role, city)
+
+
 @api.get("/targets/{target_id}")
 async def get_target(target_id: int, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     t, v = await _own_target(session, target_id, user)
@@ -463,7 +474,7 @@ async def target_questions(target_id: int, user: User = Depends(current_user),
 
 
 class TailorIn(BaseModel):
-    items: list[str]  # cv | one_page | letter, любой набор
+    items: list[str]  # cv | one_page | letter | message | linkedin, любой набор
     scheme: str = "graphite"
     instruction: str | None = None  # одна итерация правок
 
@@ -578,15 +589,20 @@ async def get_package(package_id: int, user: User = Depends(current_user),
         view = export.tailored_view(pkg, contact, drop_flagged=False)
         vac = await session.get(Vacancy, pkg.vacancy_id)
         view["file_names"] = export.file_names(pkg, contact, vac.title, vac.company_name)
+        view["docx_names"] = export.docx_names(pkg, contact, vac.title, vac.company_name)
+        view["linkedin_text"] = export.linkedin_text(view.get("linkedin"))
         _, improve_left = await tailor.revisions(session, user.id, pkg.target_id)
         target = await session.get(Target, pkg.target_id) if pkg.target_id else None
         revision_left = await billing.can(session, user, "revision")
+        from app.services import review
+
+        score = await review.score_before_after(session, pkg, target, export.tailored_view(pkg, contact))
         await session.commit()  # мог создаться бесплатный грант
         return {"id": pkg.id, "target_id": pkg.target_id, "version": pkg.version, "items": pkg.items,
                 "scheme": pkg.scheme, "flags": pkg.fact_flags, "instruction": pkg.instruction,
                 "revision_left": revision_left, "revision_price": billing.PRODUCTS["revision"].price_rub,
                 "improve_left": improve_left, "coverage": pkg.coverage,
-                "coverage_before": target.coverage if target else None, **view}
+                "coverage_before": target.coverage if target else None, "score": score, **view}
     view = export.cv_view(pkg, contact, drop_flagged=False)
     return {"id": pkg.id, "vacancy_id": pkg.vacancy_id, "version": pkg.version, "flags": pkg.fact_flags,
             "instruction": pkg.instruction, **view}
@@ -610,13 +626,28 @@ async def set_scheme(package_id: int, body: SchemeIn, user: User = Depends(curre
 
 @api.get("/packages/{package_id}/file/{item}")
 async def package_file(package_id: int, item: str, accept_flags: bool = False, preview: bool = False,
-                       user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
-    """Документ пакета: item = cv | one_page | letter. preview=true отдаёт PNG первой страницы."""
+                       fmt: str = "pdf", user: User = Depends(current_user),
+                       session: AsyncSession = Depends(get_session)):
+    """Документ пакета: item = cv | one_page | letter. preview=true отдаёт PNG первой страницы, fmt=docx Word (П7)."""
     _need_member(user)
     pkg = await _own_package(session, package_id, user)
     contact = await session.get(Contact, user.id)
     vacancy = await session.get(Vacancy, pkg.vacancy_id)
     photo = _photo(contact)
+    if fmt == "docx" and not preview:
+        from urllib.parse import quote
+
+        try:
+            data = await asyncio.to_thread(export.render_docx, pkg, contact, item, accept_flags,
+                                           vacancy.company_name, vacancy.title)
+        except export.FlagsNotAccepted as e:
+            raise HTTPException(409, str(e))
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+        name = export.file_name(item, pkg, contact, vacancy.title, vacancy.company_name, ext="docx")
+        ascii_name = {"cv": "resume", "one_page": "one_pager", "letter": "cover_letter"}[item] + f"_v{pkg.version}.docx"
+        return Response(data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        headers={"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"})
     try:
         # рендер PDF и превью занимает процессор: в отдельном потоке, чтобы не стопорить остальные запросы и бота
         data = await asyncio.to_thread(export.render_item, pkg, contact, item, photo, accept_flags,
@@ -653,19 +684,30 @@ async def send_to_telegram(package_id: int, body: SendIn, user: User = Depends(c
     vacancy = await session.get(Vacancy, pkg.vacancy_id)
     photo = _photo(contact)
     files, skipped = [], []
-    for item in [i for i in (body.items or pkg.items or []) if i in (pkg.items or [])]:
+    chosen = [i for i in (body.items or pkg.items or []) if i in (pkg.items or [])]
+    for item in [i for i in chosen if i in export.FILE_ITEMS]:
         try:
             files.append((export.file_name(item, pkg, contact, vacancy.title, vacancy.company_name),
                           export.render_item(pkg, contact, item, photo, body.accept_flags,
                                              company=vacancy.company_name, position=vacancy.title)))
+            if item == "cv":  # П7: резюме и в Word, многие работодатели просят DOCX
+                files.append((export.file_name(item, pkg, contact, vacancy.title, vacancy.company_name, ext="docx"),
+                              export.render_docx(pkg, contact, item)))
         except export.FlagsNotAccepted:
             skipped.append(item)
-    if not files:
+    view = export.tailored_view(pkg, contact)
+    texts = []
+    if "message" in chosen and view["recruiter_message"]:
+        texts += notify.text_chunks("Сообщение нанимающему менеджеру", view["recruiter_message"])
+    if "linkedin" in chosen and view["linkedin"]:
+        texts += notify.text_chunks("Профиль LinkedIn", export.linkedin_text(view["linkedin"]))
+    if not files and not texts:
         raise HTTPException(409, "Письмо ждёт подтверждения: отметьте, что утверждения в нём верны")
-    ok = await notify.send_documents(user.tg_id, files, f"Документы под вакансию «{vacancy.title}» · {vacancy.company_name}")
+    ok = await notify.send_documents(user.tg_id, files, f"Документы под вакансию «{vacancy.title}» · {vacancy.company_name}",
+                                     after=texts)
     if not ok:
         raise HTTPException(502, "Telegram не принял файлы. Попробуйте ещё раз или скачайте кнопками")
-    return {"ok": True, "sent": len(files), "skipped": skipped}
+    return {"ok": True, "sent": len(files), "texts": len(texts), "skipped": skipped}
 
 
 @api.get("/contact/photo")

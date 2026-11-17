@@ -478,3 +478,11 @@ code { font-size: 12px; background: var(--bg2); padding: 1px 5px; border-radius:
 .compare { animation: jp-fade .3s ease; }
 .restart-card { border: 1px solid color-mix(in srgb, var(--gold) 45%, transparent); }
 @media (max-width: 480px) { .topbar .link { font-size: 13px; } .topbar .btn.gold { padding: 9px 12px; font-size: 13px; } }
+
+/* П4: балл до и после; П5/П3: тексты для копирования */
+.score-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 8px; }
+.score-line b { font-size: 20px; }
+.text-block { border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.text-body { white-space: pre-wrap; word-break: break-word; font: inherit; margin: 0; max-height: 360px; overflow: auto; }
+.small-btn { padding: 6px 10px; font-size: 13px; }

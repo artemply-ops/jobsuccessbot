@@ -72,3 +72,47 @@ async def review(text: str, full_name: str | None = None) -> dict:
                                    effort="medium", max_tokens=3000, user=f"РЕЗЮМЕ:\n{clean}")
         advice = [a.model_dump() for a in res.advice[:5]]
     return {"score": check_score(items), "checks": items, "advice": advice}
+
+
+# ---------- П4: балл резюме до и после ----------
+
+async def source_text(session, user_id: int) -> str:
+    """Исходное резюме: последний загруженный файл, иначе все тексты о себе (как в /review и /check)."""
+    from sqlalchemy import select
+
+    from app.models import Source
+
+    rows = (await session.execute(select(Source).where(Source.user_id == user_id, Source.status == "parsed")
+                                  .order_by(Source.id.desc()))).scalars().all()
+    files = [s for s in rows if s.kind == "file"]
+    return files[0].text if files else "\n\n".join(s.text or "" for s in rows)
+
+
+def cv_review_text(view: dict) -> str:
+    """Готовое резюме (export.tailored_view) текстом с заголовками разделов: те же проверки, что у исходного."""
+    lines = [view.get("name", ""), view.get("headline", ""), view.get("contacts", ""), view.get("summary", "")]
+    lines += [f"- {h['value']} {h['label']}" for h in view.get("highlights", [])]
+    lines.append("Опыт работы")
+    for e in view.get("experience", []):
+        lines.append(f"{e['role']}, {e['company']}, {e['period']}")
+        lines += [f"- {b}" for b in e["bullets"]]
+    if view.get("skills"):
+        lines += ["Навыки", ", ".join(view["skills"])]
+    if view.get("education"):
+        lines += ["Образование", *view["education"]]
+    return "\n".join(x for x in lines if x)
+
+
+async def score_before_after(session, pkg, target, view: dict) -> dict | None:
+    """П4. Под вакансию: соответствие вакансии (покрытие требований) исходного резюме и нового.
+    Без вакансии: качество резюме по проверкам /check (цифры, объём, даты, контакты, разделы), без ИИ."""
+    if pkg.coverage and target is not None and (target.coverage or {}).get("score") is not None:
+        return {"kind": "vacancy", "title": "Соответствие вакансии", "before": target.coverage["score"],
+                "after": pkg.coverage.get("score")}
+    if not ({"cv", "one_page"} & set(pkg.items or [])):
+        return None
+    src = await source_text(session, pkg.user_id)
+    if not (src or "").strip():
+        return None
+    return {"kind": "quality", "title": "Качество резюме", "before": check_score(checks(src)),
+            "after": check_score(checks(cv_review_text(view)))}

@@ -87,8 +87,10 @@ async def get_user(msg_from, source: str | None = None) -> User:
 async def need_consent(message: Message, user: User) -> bool:
     if user.consent_at:
         return False
+    from app.services.site_texts import bot_answer
+
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Согласен", callback_data="consent")]])
-    await message.answer(CONSENT_TEXT, reply_markup=kb)
+    await bot_answer(message, "consent", reply_markup=kb)
     return True
 
 
@@ -153,7 +155,9 @@ async def on_consent(cb: CallbackQuery, state: FSMContext):
 
 @dp.message(Command("help"))
 async def help_cmd(message: Message):
-    await message.answer(HELP)
+    from app.services.site_texts import bot_answer
+
+    await bot_answer(message, "help")
 
 
 @dp.message(Command("web"))

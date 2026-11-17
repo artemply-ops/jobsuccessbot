@@ -51,13 +51,21 @@ export function MyPackages() {
             <span className="muted small">{dt(r.created_at)} · версия {r.version}{r.coverage != null ? ` · покрытие ${r.coverage}%` : ""}</span>
           </div>
           <div className="row gap wrap">
-            {r.items.map((it) => (
+            {r.items.filter((it) => it in FILES).map((it) => (
               <button key={it} className="btn secondary" disabled={busy === `${r.id}${it}`} onClick={async () => {
                 setBusy(`${r.id}${it}`);
                 try { await download(`/packages/${r.id}/file/${it}`, r.file_names?.[it] || `${FILES[it]}_v${r.version}.pdf`); }
                 catch (e: any) { setErr(e.message); } finally { setBusy(""); }
               }}>{busy === `${r.id}${it}` ? "…" : `${TITLES[it]} · PDF`}</button>
             ))}
+            {r.items.includes("cv") && (
+              <button className="btn secondary" disabled={busy === `${r.id}docx`} onClick={async () => {
+                setBusy(`${r.id}docx`);
+                try { await download(`/packages/${r.id}/file/cv?fmt=docx`, (r.file_names?.cv || `${FILES.cv}_v${r.version}.pdf`).replace(/\.pdf$/, ".docx")); }
+                catch (e: any) { setErr(e.message); } finally { setBusy(""); }
+              }}>{busy === `${r.id}docx` ? "…" : "Резюме · Word"}</button>
+            )}
+            {r.items.some((it) => it === "message" || it === "linkedin") && <span className="muted small">тексты для LinkedIn в мастере</span>}
             {r.target_id && <button className="link" onClick={() => openInMaster(r.target_id!, r.id, !r.company)}>Открыть и править →</button>}
           </div>
         </div>

@@ -181,3 +181,104 @@ async def test_general_cv_without_vacancy(session, monkeypatch):
         monkeypatch.setattr(llm, "_client", None)
     assert pkg.items == ["cv", "one_page"] and pkg.coverage is None and pkg.cover_letter == ""
     assert calls == ["TailoredCV", "FactCheck"] and "без конкретной вакансии" in systems[0]
+
+
+def test_normalize_items_new_texts():
+    assert tailor.normalize_items(["linkedin", "message", "cv"]) == ["cv", "message", "linkedin"]
+
+
+async def test_message_linkedin_docx_and_score(session, monkeypatch):
+    """П3, П5, П7, П4. ТЕСТОВЫЕ ДАННЫЕ: человек, компания и цифры вымышленные."""
+    import httpx
+
+    from app.config import get_settings
+    from app.models import Contact, Source, User
+    from app.services import intake, llm, review
+    from app.services.profile import save_basic
+
+    user = User(tg_id=952, consent_at=datetime.datetime.now())
+    session.add(user)
+    await session.flush()
+    await save_basic(session, user, "Руководитель продукта, Москва")
+    session.add(Contact(user_id=user.id, full_name="Анна Тестова", email="anna.test@example.com", links=[], vault={}))
+    session.add(Source(user_id=user.id, kind="text", status="parsed", text="Работала продактом. Делала продукт."))
+    target = await intake.add_target(session, user, text="Руководитель продукта в Тестовый Банк. Задачи: развитие "
+                                     "мобильного приложения. Требования: управление продуктом от 5 лет, SQL.")
+    cv = {"headline": "Руководитель продукта", "summary": "[CANDIDATE] запускала продукты.", "highlights": [],
+          "skills": ["SQL"], "education": ["Тестовый университет"], "languages": [],
+          "experience": [{"company": "Тестовая компания", "role": "Продакт", "period": "2021 — 2026",
+                          "bullets": ["Запустила мобильное приложение для клиентов банка, 14 человек в команде"]}]}
+    li = {"headline": "Руководитель продукта · финтех", "about": "Я [CANDIDATE], делаю продукты.",
+          "experience": [{"role": "Продакт", "company": "Тестовая компания", "period": "2021 — 2026", "text": "Запуск"}],
+          "skills": ["SQL"]}
+    calls, extras_n = [], [0]
+
+    def handler(req: httpx.Request):
+        name = json.loads(req.content)["response_format"]["json_schema"]["name"]
+        calls.append(name)
+        if name == "Extras":
+            extras_n[0] += 1
+            msg = "Здравствуйте! Выдуманный факт." if extras_n[0] == 1 else "Здравствуйте! Хочу поговорить о роли."
+            out = {"recruiter_message": msg, "linkedin": li}
+        elif name == "FactCheck":
+            first = calls.count("FactCheck") == 1
+            out = {"flags": [{"text": "Выдуманный факт.", "where": "recruiter_message", "reason": "нет в профиле"}]
+                   if first else []}
+        else:
+            out = {"TailoredBoth": {"cv": cv, "cover_letter": "Хочу к вам."},
+                   "DossierData": {"business_area": "", "summary": "", "mission": None, "values": [], "products": [],
+                                   "culture_signals": [], "tone_of_voice": "", "sources": []},
+                   "ReqCoverage": {"items": []}}[name]
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop",
+                                                      "message": {"content": json.dumps(out, ensure_ascii=False)}}]})
+
+    monkeypatch.setattr(get_settings(), "llm_api_key", "test-key")
+    monkeypatch.setattr(get_settings(), "llm_enabled", True)
+    monkeypatch.setattr(llm, "_client", httpx.AsyncClient(base_url="https://or.test", transport=httpx.MockTransport(handler)))
+    try:
+        pkg = await tailor.build(session, user, target, ["cv", "letter", "message", "linkedin"])
+        only_texts = await tailor.build(session, user, target, ["linkedin"])
+    finally:
+        monkeypatch.setattr(llm, "_client", None)
+    assert calls.count("Extras") >= 3  # первый вариант не прошёл фактчек: одна переделка
+    assert pkg.recruiter_message == "Здравствуйте! Хочу поговорить о роли." and pkg.linkedin["skills"] == ["SQL"]
+    assert not [f for f in pkg.fact_flags if f["where"] == "recruiter_message"]
+    assert only_texts.items == ["linkedin"] and only_texts.cv["headline"]
+
+    contact = await session.get(Contact, user.id)
+    view = export.tailored_view(pkg, contact)
+    assert view["linkedin"]["about"].startswith("Я Анна Тестова")  # маркер раскрыт только при выдаче
+    assert "Заголовок (Headline)" in export.linkedin_text(view["linkedin"])
+    assert set(export.file_names(pkg, contact, "Роль", "Тестовый Банк")) == {"cv", "letter"}
+    assert export.letter_flags(pkg) == []  # флаги текстов П3/П5 письмо не блокируют
+    for item in ("cv", "letter"):
+        assert export.render_docx(pkg, contact, item, company="Тестовый Банк")[:2] == b"PK"  # DOCX это zip
+    with pytest.raises(ValueError):
+        export.render_docx(pkg, contact, "message")
+    with pytest.raises(ValueError):
+        export.render_item(pkg, contact, "linkedin")
+
+    score = await review.score_before_after(session, pkg, target, view)  # П4: у покрытия нет требований -> качество
+    assert score["kind"] == "quality" and score["after"] > score["before"]
+
+
+def test_salary_summary_from_open_data():
+    """П6: ориентир только по похожим вакансиям с зарплатой; мало данных -> честно без цифры. ТЕСТОВЫЕ ДАННЫЕ."""
+    from app.services import salary
+    from app.services.sources.base import RawVacancy
+
+    def v(title, city, lo, hi):
+        return RawVacancy(source="trudvsem", external_id=title + city + str(lo), title=title, company_name="Т",
+                          url="", description="", city=city, salary_from=lo, salary_to=hi, currency="RUB")
+
+    rows = [v("Руководитель отдела продаж", "г. Москва", 150_000 + i * 10_000, None) for i in range(6)]
+    rows += [v("Руководитель отдела продаж B2B", "Тестовая область", 80_000, 120_000)] * 3
+    rows += [v("Водитель погрузчика", "г. Москва", 60_000, 60_000)] * 10  # непохожие не считаются
+    res = salary.summarize("Руководитель отдела продаж", "Москва", rows)
+    assert res["scope"] == "Москва" and res["n"] == 6 and res["median"] == 175_000
+    assert res["source"] and res["date"] and res["p25"] <= res["median"] <= res["p75"]
+    whole = salary.summarize("Руководитель отдела продаж", "Казань", rows)  # по городу мало: по России
+    assert whole["scope"] == "по России" and whole["n"] == 9
+    none = salary.summarize("Главный технолог", None, rows)
+    assert none["median"] is None and "меньше" in none["reason"]
+    assert "175 000" in salary.text(res)

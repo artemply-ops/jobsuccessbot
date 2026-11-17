@@ -46,8 +46,16 @@ def file_name(item: str, pkg: Package, contact: Contact | None, role: str | None
     return "_".join(p for p in parts if p) + f".{ext}"
 
 
+FILE_ITEMS = ("cv", "one_page", "letter")  # как schemas.FILE_ITEMS: у message и linkedin файлов нет
+EXTRA_WHERE = ("recruiter_message", "linkedin")
+
+
 def file_names(pkg: Package, contact: Contact | None, role: str | None, company: str | None) -> dict:
-    return {it: file_name(it, pkg, contact, role, company) for it in (pkg.items or [])}
+    return {it: file_name(it, pkg, contact, role, company) for it in (pkg.items or []) if it in FILE_ITEMS}
+
+
+def docx_names(pkg: Package, contact: Contact | None, role: str | None, company: str | None) -> dict:
+    return {it: file_name(it, pkg, contact, role, company, ext="docx") for it in (pkg.items or []) if it in FILE_ITEMS}
 
 
 def _flagged(pkg: Package) -> set[str]:
@@ -76,9 +84,14 @@ def cv_view(pkg: Package, contact: Contact | None, drop_flagged: bool = True) ->
     }
 
 
+def letter_flags(pkg: Package) -> list[dict]:
+    """Флаги письма: всё, что не резюме и не тексты LinkedIn и сообщения менеджеру (как tailor.letter_flag)."""
+    return [f for f in pkg.fact_flags or [] if f.get("where") != "cv" and f.get("where") not in EXTRA_WHERE]
+
+
 def _check(pkg: Package, accept_flags: bool) -> None:
-    letter_flags = [f for f in pkg.fact_flags or [] if f.get("where") != "cv"]
-    if letter_flags and not accept_flags:
+    letter_flags_ = letter_flags(pkg)
+    if letter_flags_ and not accept_flags:
         raise FlagsNotAccepted("В письме есть утверждения, не подтверждённые профилем. "
                                "Исправьте или подтвердите их явно.")
 
@@ -205,7 +218,31 @@ def tailored_view(pkg: Package, contact: Contact | None, drop_flagged: bool = Tr
         "education": [r(x) for x in cv.get("education", [])],
         "languages": [r(x) for x in cv.get("languages", [])],
         "cover_letter": r(pkg.cover_letter),
+        "recruiter_message": r(pkg.recruiter_message),
+        "linkedin": _restore_linkedin(pkg.linkedin, r),
     }
+
+
+def _restore_linkedin(li: dict | None, r) -> dict | None:
+    if not li:
+        return None
+    return {"headline": r(li.get("headline")), "about": r(li.get("about")),
+            "experience": [{"role": r(e.get("role")), "company": r(e.get("company")), "period": e.get("period", ""),
+                            "text": r(e.get("text"))} for e in li.get("experience", [])],
+            "skills": [r(s) for s in li.get("skills", [])]}
+
+
+def linkedin_text(li: dict | None) -> str:
+    """Профиль LinkedIn одним текстом: по разделам, чтобы скопировать в поля профиля."""
+    if not li:
+        return ""
+    parts = [f"Заголовок (Headline):\n{li['headline']}", f"О себе (About):\n{li['about']}"]
+    if li.get("experience"):
+        parts.append("Опыт (Experience):\n" + "\n\n".join(
+            f"{e['role']}, {e['company']} ({e['period']})\n{e['text']}" for e in li["experience"]))
+    if li.get("skills"):
+        parts.append("Навыки (Skills):\n" + ", ".join(li["skills"]))
+    return "\n\n".join(parts)
 
 
 def fit_one_page(v: dict, scheme: str, photo: bytes | None = None, max_steps: int = 80) -> tuple[bytes, dict]:
@@ -245,7 +282,7 @@ def render_item(pkg: Package, contact: Contact | None, item: str, photo: bytes |
     """Один документ пакета в PDF: cv, one_page или letter."""
     from app.services.cv_render import render_cv, render_letter
 
-    if item not in (pkg.items or []):
+    if item not in (pkg.items or []) or item not in FILE_ITEMS:
         raise ValueError("Этого документа нет в пакете")
     scheme = scheme or pkg.scheme or "graphite"
     v = tailored_view(pkg, contact)
@@ -255,3 +292,89 @@ def render_item(pkg: Package, contact: Contact | None, item: str, photo: bytes |
     if item == "one_page":
         return fit_one_page(v, scheme, photo)[0]
     return render_cv(v, scheme, one_page=False, photo=photo)[0]
+
+
+def render_docx(pkg: Package, contact: Contact | None, item: str, accept_flags: bool = False, company: str = "",
+                position: str = "") -> bytes:
+    """П7: документ пакета в Word. Тот же текст, что в PDF (одностраничник ужат тем же рендером), простая вёрстка:
+    Word у работодателя открывает и правит его без сюрпризов. Фото в Word не ставим."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Cm, RGBColor
+
+    if item not in (pkg.items or []) or item not in FILE_ITEMS:
+        raise ValueError("Этого документа нет в пакете")
+    v = tailored_view(pkg, contact)
+    if item == "letter":
+        _check(pkg, accept_flags)
+    if item == "one_page":
+        v = fit_one_page(v, pkg.scheme or "graphite")[1]
+    doc = Document()
+    for s in doc.sections:
+        s.left_margin = s.right_margin = Cm(2)
+        s.top_margin = s.bottom_margin = Cm(1.6)
+    normal = doc.styles["Normal"]
+    normal.font.name, normal.font.size = "Arial", Pt(10.5)
+    gray = RGBColor(0x55, 0x55, 0x55)
+
+    def head(text: str, size: float = 12):
+        p = doc.add_paragraph()
+        run = p.add_run(text)
+        run.bold, run.font.size = True, Pt(size)
+        p.paragraph_format.space_before, p.paragraph_format.space_after = Pt(8), Pt(2)
+        return p
+
+    def line(text: str, color=None, bold=False):
+        p = doc.add_paragraph()
+        run = p.add_run(text)
+        run.bold = bold
+        if color:
+            run.font.color.rgb = color
+        p.paragraph_format.space_after = Pt(2)
+        return p
+
+    if v["name"]:
+        head(v["name"], 18)
+    if item == "letter":
+        if v["contacts"]:
+            line(v["contacts"], gray)
+        if position or company:
+            line(" · ".join(x for x in (position, company) if x and x != NO_COMPANY), gray)
+        doc.add_paragraph()
+        for para in v["cover_letter"].split("\n"):
+            if para.strip():
+                doc.add_paragraph(para.strip()).paragraph_format.space_after = Pt(6)
+        if v["name"]:
+            p = doc.add_paragraph(v["name"])
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    else:
+        line(v["headline"], bold=True)
+        if v["contacts"]:
+            line(v["contacts"], gray)
+        if v["summary"]:
+            doc.add_paragraph(v["summary"]).paragraph_format.space_before = Pt(6)
+        if v["highlights"]:
+            head("Ключевые результаты")
+            for h in v["highlights"]:
+                doc.add_paragraph(f"{h['value']}  {h['label']}", style="List Bullet")
+        head("Опыт работы")
+        for e in v["experience"]:
+            p = doc.add_paragraph()
+            p.add_run(f"{e['role']}, {e['company']}").bold = True
+            r = p.add_run(f"   {e['period']}")
+            r.font.color.rgb = gray
+            p.paragraph_format.space_before, p.paragraph_format.space_after = Pt(6), Pt(2)
+            for b in e["bullets"]:
+                doc.add_paragraph(b, style="List Bullet")
+        if v["skills"]:
+            head("Навыки")
+            doc.add_paragraph(", ".join(v["skills"]))
+        if v["education"]:
+            head("Образование")
+            for x in v["education"]:
+                doc.add_paragraph(x)
+        if v["languages"]:
+            head("Языки")
+            doc.add_paragraph(", ".join(v["languages"]))
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()

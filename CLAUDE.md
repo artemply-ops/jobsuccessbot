@@ -7,7 +7,7 @@ MVP: блок 1 (профиль кандидата), блок 2 (поиск и �
 Прочитать хвост `PROJECT_MEMORY.md`: раздел «В процессе», «Следующие шаги», «Открытые вопросы».
 
 ## Структура
-- `backend/app/services/` вся логика: `profile.py` (блок 1), `collect.py` + `sources/` + `scoring.py` (блок 2), `package.py` + `export.py` (блок 3), `pii.py` (обезличивание), `llm.py` (LLM через OpenRouter)
+- `backend/app/services/` вся логика: `profile.py` (блок 1), `collect.py` + `sources/` + `scoring.py` (блок 2), `package.py` + `tailor.py` + `export.py` (блок 3: резюме, одностраничник, письмо, сообщение менеджеру, LinkedIn; PDF и Word), `salary.py` (ориентир по зарплате), `pii.py` (обезличивание), `llm.py` (LLM через OpenRouter)
 - `backend/app/api/routes.py` HTTP API, `backend/app/bot/__main__.py` бот, `backend/app/jobs.py` фоновые задачи
 - `web/` PWA (Vite + React + TS), собирается в `web/dist`, раздаётся бэкендом
 - `data/companies_seed.yaml` посевной каталог компаний

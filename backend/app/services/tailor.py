@@ -15,7 +15,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Package, Target, User, Vacancy
-from app.schemas import CV, PACKAGE_ITEMS, FactCheck, TailoredBoth, TailoredCV, TailoredLetter
+from app.schemas import (CV, PACKAGE_ITEMS, TARGET_ONLY_ITEMS, Extras, FactCheck, TailoredBoth, TailoredCV,
+                         TailoredLetter)
 from app.services import billing, intake, llm, package
 from app.services import cv_render
 from app.services.profile import latest_profile, profile_to_text
@@ -69,6 +70,23 @@ SYSTEM_LETTER = f"""Ты сильный карьерный консультан�
 роли, 1-2 доказательства из опыта. Стиль кандидата (writing style) и tone of voice компании.
 {RULES}"""
 
+SYSTEM_MESSAGE = """recruiter_message: короткое сообщение нанимающему менеджеру для LinkedIn или почты (П5).
+400-700 знаков, 3-5 предложений: кто кандидат, почему пишет именно в эту компанию на эту роль, 1-2 самых сильных
+факта под требования вакансии, просьба о коротком разговоре. Без обращения по имени (его подставит кандидат),
+без подписи, без вложений и ссылок. Живо и по делу, не копия сопроводительного письма."""
+
+SYSTEM_LINKEDIN = """linkedin: профиль LinkedIn под целевую роль (П3).
+- headline: до 220 знаков, роль и специализация, которые кандидат реально занимал, плюс ключевая сила; без «ищу работу».
+- about: 120-250 слов от первого лица, абзацами: чем занимается, в чём силён (с цифрами из профиля), что ищет.
+- experience: роли из профиля, свежие сверху, до 6; text 2-4 строки с результатами, только факты профиля.
+- skills: до 15, сначала ключевые для целевой роли.
+Язык профиля: язык вакансии; без вакансии язык материалов кандидата."""
+
+SYSTEM_EXTRAS = """Ты сильный карьерный консультант. Готовишь тексты кандидата. Заполни только те поля, которые
+просят, остальные оставь пустыми (recruiter_message = "", linkedin = null).
+{parts}
+{rules}"""
+
 SYSTEM_FACTCHECK = package.SYSTEM_FACTCHECK + """
 Показатели (highlights) проверяй особенно строго: число должно быть в профиле. Для них where = "cv".
 Заголовок (headline) и навыки (skills) тоже проверяй: должность выше фактической и навык, которого нет в профиле
@@ -99,12 +117,42 @@ def apply_cv_flags(cv: CV, flags: list, fallback_headline: str) -> CV:
     return cv
 
 
-async def _check(profile_text: str, cv: CV | None, letter: str) -> list:
+EXTRA_WHERE = ("recruiter_message", "linkedin")
+
+
+def letter_flag(f) -> bool:
+    """Флаг письма: всё, что не резюме и не тексты П3/П5 (старые пакеты знали только cv и письмо)."""
+    where = f.get("where") if isinstance(f, dict) else f.where
+    return where != "cv" and where not in EXTRA_WHERE
+
+
+async def _check(profile_text: str, cv: CV | None, letter: str, extras: dict | None = None) -> list:
+    texts = {"cv": cv.model_dump() if cv else None, "cover_letter": letter, **(extras or {})}
     res = await llm.structured(
         schema=FactCheck, system=SYSTEM_FACTCHECK, effort="medium", max_tokens=4000,
-        user=f"ПРОФИЛЬ:\n{profile_text}\n\nТЕКСТЫ ДЛЯ ПРОВЕРКИ:\n"
-             f"{json.dumps({'cv': cv.model_dump() if cv else None, 'cover_letter': letter}, ensure_ascii=False)}")
+        user=f"ПРОФИЛЬ:\n{profile_text}\n\nТЕКСТЫ ДЛЯ ПРОВЕРКИ (where = ключ, где найдено утверждение):\n"
+             f"{json.dumps(texts, ensure_ascii=False)}")
     return [f for f in res.flags if f.severity != "low"]  # low: формулировка, а не выдумка; пользователя не дёргаем
+
+
+async def _extras(context: str, need_msg: bool, need_li: bool, fix: str = "") -> Extras:
+    parts = "\n\n".join(p for p, need in ((SYSTEM_MESSAGE, need_msg), (SYSTEM_LINKEDIN, need_li)) if need)
+    res = await llm.structured(schema=Extras, system=SYSTEM_EXTRAS.format(parts=parts, rules=RULES), user=context + fix,
+                               effort="medium", max_tokens=6000)
+    if not need_msg:
+        res.recruiter_message = ""
+    if not need_li:
+        res.linkedin = None
+    return res
+
+
+def _extras_texts(ex: Extras) -> dict:
+    out = {}
+    if ex.recruiter_message:
+        out["recruiter_message"] = ex.recruiter_message
+    if ex.linkedin:
+        out["linkedin"] = ex.linkedin.model_dump()
+    return out
 
 
 class PackageError(ValueError):
@@ -114,7 +162,8 @@ class PackageError(ValueError):
 def normalize_items(items: list[str]) -> list[str]:
     out = [i for i in PACKAGE_ITEMS if i in set(items or [])]
     if not out:
-        raise PackageError("Выберите хотя бы один документ: резюме, одностраничник или письмо.")
+        raise PackageError("Выберите хотя бы один документ: резюме, одностраничник, письмо, сообщение менеджеру "
+                           "или профиль LinkedIn.")
     return out
 
 
@@ -164,8 +213,8 @@ def billing_action(instruction: str | None, auto: bool = False) -> str | None:
 async def build(session: AsyncSession, user: User, target: Target, items: list[str], scheme: str = "graphite",
                 instruction: str | None = None, auto: bool = False) -> Package:
     general = intake.is_general(target)
-    if general:  # без вакансии письмо писать не о чем
-        items = [i for i in items if i != "letter"]
+    if general:  # без вакансии письмо и сообщение менеджеру писать не о чем
+        items = [i for i in items if i not in TARGET_ONLY_ITEMS]
     items = normalize_items(items)
     if not cv_render.valid(scheme):
         raise PackageError("Неизвестная цветовая схема")
@@ -197,36 +246,49 @@ async def build(session: AsyncSession, user: User, target: Target, items: list[s
                    f"Разбор: {json.dumps(target.parsed, ensure_ascii=False)}\n{vacancy.description[:8000]}\n\n"
                    f"ДОСЬЕ КОМПАНИИ:\n{json.dumps(dossier, ensure_ascii=False)}")
     if instruction:
-        context += (f"\n\nПРЕДЫДУЩАЯ ВЕРСИЯ:\n{json.dumps({'cv': prev.cv, 'cover_letter': prev.cover_letter}, ensure_ascii=False)}"
+        old = {"cv": prev.cv, "cover_letter": prev.cover_letter, "recruiter_message": prev.recruiter_message,
+               "linkedin": prev.linkedin}
+        context += (f"\n\nПРЕДЫДУЩАЯ ВЕРСИЯ:\n{json.dumps(old, ensure_ascii=False)}"
                     f"\n\nПРАВКА ОТ КАНДИДАТА (примени к предыдущей версии, правила выше важнее правки): {instruction}")
 
     need_cv, need_letter = bool({"cv", "one_page"} & set(items)), "letter" in items
-    if need_cv and need_letter:
-        schema, system = TailoredBoth, f"{SYSTEM_CV}\n\nПлюс сопроводительное письмо:\n{SYSTEM_LETTER}"
-    elif need_cv:
-        schema, system = TailoredCV, SYSTEM_CV_GENERAL if general else SYSTEM_CV
-    else:
-        schema, system = TailoredLetter, SYSTEM_LETTER
-    draft = await llm.structured(schema=schema, system=system, user=context, effort="high")
+    need_msg, need_li = "message" in items, "linkedin" in items
+    cv, letter = None, ""
+    if need_cv or need_letter:
+        if need_cv and need_letter:
+            schema, system = TailoredBoth, f"{SYSTEM_CV}\n\nПлюс сопроводительное письмо:\n{SYSTEM_LETTER}"
+        elif need_cv:
+            schema, system = TailoredCV, SYSTEM_CV_GENERAL if general else SYSTEM_CV
+        else:
+            schema, system = TailoredLetter, SYSTEM_LETTER
+        draft = await llm.structured(schema=schema, system=system, user=context, effort="high")
+        cv = verified_highlights(draft.cv, profile_text) if need_cv else None
+        letter = getattr(draft, "cover_letter", "") or ""
+    ex = await _extras(context, need_msg, need_li) if (need_msg or need_li) else Extras()
 
-    cv = verified_highlights(draft.cv, profile_text) if need_cv else None
-    letter = getattr(draft, "cover_letter", "") or ""
-    flags = await _check(profile_text, cv, letter)
-    letter_flags = [f for f in flags if f.where != "cv"]
+    flags = await _check(profile_text, cv, letter, _extras_texts(ex))
+    extra_flags = [f for f in flags if f.where in EXTRA_WHERE]
+    if extra_flags:  # одна попытка переписать тексты П3/П5 без неподтверждённого, затем перепроверка только их
+        ex = await _extras(context, need_msg, need_li, fix="\n\nПРЕДЫДУЩИЙ ВАРИАНТ НЕ ПРОШЁЛ ПРОВЕРКУ ФАКТОВ, этого "
+                           "не пиши:\n" + "\n".join(f"- {f.text}: {f.reason}" for f in extra_flags))
+        flags = [f for f in flags if f.where not in EXTRA_WHERE] + [
+            f for f in await _check(profile_text, None, "", _extras_texts(ex)) if f.where in EXTRA_WHERE]
+    letter_flags = [f for f in flags if letter_flag(f)]
     if letter and letter_flags:  # одна попытка исправить письмо самим, чтобы пользователь получил чистый текст
         fixed = await llm.structured(
             schema=TailoredLetter, system=SYSTEM_LETTER_FIX, effort="medium", max_tokens=4000,
             user=f"ПРОФИЛЬ:\n{profile_text}\n\nПИСЬМО:\n{letter}\n\nНЕ ПОДТВЕРЖДАЕТСЯ:\n"
                  + "\n".join(f"- {f.text}: {f.reason}" for f in letter_flags))
         letter = fixed.cover_letter
-        flags = [f for f in flags if f.where == "cv"] + [f for f in await _check(profile_text, None, letter)
-                                                         if f.where != "cv"]
+        flags = [f for f in flags if not letter_flag(f)] + [f for f in await _check(profile_text, None, letter)
+                                                            if letter_flag(f)]
     if cv:
         cv = apply_cv_flags(cv, flags, prof.data.get("headline") or "")
 
     pkg = Package(user_id=user.id, vacancy_id=vacancy.id, target_id=target.id,
                   version=(prev.version + 1) if prev else 1, items=items, scheme=scheme,
-                  cv=cv.model_dump() if cv else {"headline": prof.data.get("headline") or ""}, cover_letter=letter, recruiter_message="",
+                  cv=cv.model_dump() if cv else {"headline": prof.data.get("headline") or ""}, cover_letter=letter, recruiter_message=ex.recruiter_message or "",
+                  linkedin=ex.linkedin.model_dump() if ex.linkedin else None,
                   fact_flags=[f.model_dump() for f in flags],
                   instruction=(AUTO + instruction) if auto and instruction else instruction)
     if cv and not general:  # проверка после генерации: сколько требований и ключевых слов попало в резюме

@@ -250,7 +250,8 @@ class Package(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     cv: Mapped[dict] = mapped_column(JSON)  # schemas.CV, обезличенный
     cover_letter: Mapped[str] = mapped_column(Text)
-    recruiter_message: Mapped[str] = mapped_column(Text)
+    recruiter_message: Mapped[str] = mapped_column(Text)  # П5: сообщение нанимающему менеджеру
+    linkedin: Mapped[dict | None] = mapped_column(JSON)  # П3: schemas.LinkedIn, обезличенный
     fact_flags: Mapped[list] = mapped_column(JSON, default=list)
     instruction: Mapped[str | None] = mapped_column(Text)
     # Этап 3 пивота: пакет под цель пользователя. Колонки nullable: init_db досоздаёт их на старой базе

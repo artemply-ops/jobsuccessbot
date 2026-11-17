@@ -67,7 +67,23 @@ async def stage_done(user_id: int, kind: str, ok: bool, note: str | None = None)
         await bot.session.close()
 
 
-async def send_documents(chat_id: int, files: list[tuple[str, bytes]], text: str | None = None) -> bool:
+def text_chunks(title: str, body: str, limit: int = 3800) -> list[str]:
+    """Текст для копирования (сообщение менеджеру, LinkedIn) сообщениями Telegram: заголовок и куски до лимита."""
+    import html
+
+    parts, cur = [], ""
+    for para in (body or "").split("\n\n"):
+        if cur and len(cur) + len(para) + 2 > limit:
+            parts.append(cur)
+            cur = ""
+        cur = f"{cur}\n\n{para}" if cur else para
+    if cur:
+        parts.append(cur)
+    return [(f"<b>{html.escape(title)}</b>\n\n" if i == 0 else "") + html.escape(p) for i, p in enumerate(parts)]
+
+
+async def send_documents(chat_id: int, files: list[tuple[str, bytes]], text: str | None = None,
+                         after: list[str] | None = None) -> bool:
     """Файлы пакета в чат с ботом. Нужен для Mini App: скачивание из окна Telegram работает плохо."""
     s = get_settings()
     if not s.telegram_bot_token:
@@ -82,6 +98,8 @@ async def send_documents(chat_id: int, files: list[tuple[str, bytes]], text: str
             await bot.send_message(chat_id, text, disable_web_page_preview=True)
         for name, data in files:
             await bot.send_document(chat_id, BufferedInputFile(data, name))
+        for msg in after or []:  # тексты для копирования: сообщение менеджеру, профиль LinkedIn
+            await bot.send_message(chat_id, msg, disable_web_page_preview=True)
         return True
     except Exception:
         log.exception("telegram send_documents failed: chat=%s files=%s", chat_id, len(files))

@@ -15,9 +15,13 @@ def test_toggle_items_any_subset():
     assert cv_flow.toggle([], "letter") == ["letter"]
     assert cv_flow.toggle(["cv", "letter"], "cv") == ["letter"]
     assert cv_flow.toggle(["letter"], "cv") == ["cv", "letter"]
-    assert cv_flow.toggle(["cv"], "all") == ["cv", "one_page", "letter"]
+    assert cv_flow.toggle(["cv"], "all") == ["cv", "one_page", "letter", "message", "linkedin"]
     kb = cv_flow.items_kb(["cv"])
     assert kb.inline_keyboard[0][0].text.startswith("☑") and kb.inline_keyboard[2][0].text.startswith("☐")
+    # без вакансии письмо и сообщение менеджеру недоступны (Р5)
+    assert cv_flow.toggle(["cv"], "all", general=True) == ["cv", "one_page", "linkedin"]
+    assert cv_flow.toggle(["cv"], "letter", general=True) == ["cv"]
+    assert len(cv_flow.items_kb([], general=True).inline_keyboard) == 4  # 3 документа + ряд кнопок
 
 
 def test_is_url():
@@ -97,3 +101,23 @@ def test_errors_go_to_rotating_file(tmp_path, monkeypatch):
             if h not in before:
                 root.removeHandler(h)
                 h.close()
+
+
+async def test_quick_path_from_fork(session):
+    """Р5: развилка в боте -> «Резюме из опыта» -> должность -> выбор документов без письма."""
+    from app.db import init_db
+
+    await init_db()
+    state, msg = _ctx(5004), _msg(5004)
+    await cv_flow.ask_path(msg, state)
+    kb = msg.answer.await_args.kwargs["reply_markup"].inline_keyboard
+    assert [r[0].callback_data for r in kb] == ["cv:quick", "cv:target"]
+    cb = SimpleNamespace(data="cv:quick", answer=AsyncMock(), message=msg, from_user=msg.from_user)
+    await cv_flow.on_path(cb, state)
+    assert await state.get_state() == cv_flow.CV.role.state
+    assert await cv_flow.handle_text(msg, state, "Руководитель отдела продаж")
+    assert await state.get_state() == cv_flow.CV.items.state
+    data = await state.get_data()
+    assert data["general"] is True and data["items"] == ["cv", "one_page"] and data["target_id"]
+    kb = msg.answer.await_args.kwargs["reply_markup"].inline_keyboard
+    assert "cvi:letter" not in [r[0].callback_data for r in kb]

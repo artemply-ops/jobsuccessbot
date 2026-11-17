@@ -21,8 +21,12 @@ type Flag = { text: string; where: string; reason: string };
 type Req = { requirement: string; status: "covered" | "partial" | "missing"; evidence: string; in_profile: boolean; question: string };
 type Cov = { requirements: Req[]; req_covered: number; req_partial: number; req_total: number;
   keywords_covered: string[]; keywords_missing: string[]; kw_total: number; score: number };
+type Score = { kind: "vacancy" | "quality"; title: string; before: number | null; after: number | null };
 type Pkg = { id: number; version: number; items: string[]; scheme: string; flags: Flag[]; revision_left: boolean; revision_price: number;
-  improve_left: number; coverage: Cov | null; coverage_before: Cov | null; file_names?: Record<string, string> };
+  improve_left: number; coverage: Cov | null; coverage_before: Cov | null; file_names?: Record<string, string>;
+  docx_names?: Record<string, string>; recruiter_message?: string; linkedin_text?: string; score?: Score | null };
+type Salary = { role?: string; n: number; scope?: string; median: number | null; p25?: number; p75?: number;
+  source?: string; date?: string; caveat?: string; url?: string; reason?: string };
 type ReviewRes = { score: number; checks: { key: string; title: string; ok: boolean; note: string }[];
   advice: { problem: string; fix: string }[] };
 
@@ -30,8 +34,19 @@ const ITEMS: [string, string][] = [
   ["cv", "Резюме"],
   ["one_page", "Одностраничник"],
   ["letter", "Сопроводительное письмо"],
+  ["message", "Сообщение нанимающему менеджеру"],
+  ["linkedin", "Профиль LinkedIn"],
 ];
+const ITEM_NOTES: Record<string, string> = {
+  message: "короткий текст для LinkedIn или почты",
+  linkedin: "заголовок, «О себе», опыт и навыки, чтобы скопировать в профиль",
+};
+const FILE_ITEMS = ["cv", "one_page", "letter"];  // файлы PDF и Word; message и linkedin это тексты
+const TARGET_ONLY = ["letter", "message"];  // без вакансии писать не о чем
+const DEFAULT_ITEMS: Record<Mode, string[]> = { target: ["cv", "one_page", "letter"], quick: ["cv", "one_page"] };
 const FILE_NAMES: Record<string, string> = { cv: "Резюме", one_page: "Одностраничник", letter: "Сопроводительное_письмо" };
+const EXTRA_WHERE = ["recruiter_message", "linkedin"];
+const isLetterFlag = (f: Flag) => f.where !== "cv" && !EXTRA_WHERE.includes(f.where);
 const SAVE_KEY = "jp_make";
 
 function load(): { mode?: Mode; step?: Step; targetId?: number; items?: string[]; scheme?: string; packageId?: number } {
@@ -47,7 +62,7 @@ export default function MakePage({ guest = false }: { guest?: boolean }) {
   const [mode, setMode] = useState<Mode>(saved.mode || "target");
   const [step, setStep] = useState<Step>(saved.step || "start");
   const [target, setTarget] = useState<Target | null>(null);
-  const [items, setItems] = useState<string[]>(saved.items || ITEMS.map(([k]) => k));
+  const [items, setItems] = useState<string[]>(saved.items || DEFAULT_ITEMS[saved.mode || "target"]);
   const [scheme, setScheme] = useState(saved.scheme || "graphite");
   const [packageId, setPackageId] = useState<number | undefined>(saved.packageId);
   const [role, setRole] = useState("");
@@ -58,7 +73,7 @@ export default function MakePage({ guest = false }: { guest?: boolean }) {
   const [needLogin, setNeedLogin] = useState<null | (() => void)>(null);
   const [ai, setAi] = useState(true);
   const quick = mode === "quick";
-  const itemList = quick ? ITEMS.filter(([k]) => k !== "letter") : ITEMS;  // без вакансии письмо писать не о чем
+  const itemList = quick ? ITEMS.filter(([k]) => !TARGET_ONLY.includes(k)) : ITEMS;  // без вакансии письмо писать не о чем
 
   useEffect(() => { getConfig().then((c) => setAi(c.ai)).catch(() => {}); }, []);
   useEffect(() => {
@@ -77,7 +92,7 @@ export default function MakePage({ guest = false }: { guest?: boolean }) {
     setMode(m);
     setTarget(null);
     setPackageId(undefined);
-    setItems(m === "quick" ? ["cv", "one_page"] : ITEMS.map(([k]) => k));
+    setItems(DEFAULT_ITEMS[m]);
     setStep("materials");
   };
   const restart = () => { setTarget(null); setPackageId(undefined); setStep("start"); };
@@ -164,7 +179,7 @@ export default function MakePage({ guest = false }: { guest?: boolean }) {
             <label key={k} className="check">
               <input type="checkbox" checked={items.includes(k)}
                 onChange={() => setItems(items.includes(k) ? items.filter((i) => i !== k) : itemList.map(([x]) => x).filter((x) => x === k || items.includes(x)))} />
-              {title}
+              {title}{ITEM_NOTES[k] && <span className="muted small"> · {ITEM_NOTES[k]}</span>}
             </label>
           ))}
           {quick && (
@@ -173,25 +188,26 @@ export default function MakePage({ guest = false }: { guest?: boolean }) {
               <span className="muted small">Не знаете точно: оставьте пустым, соберу под вашу основную профессию.</span>
             </label>
           )}
-          {quick && <p className="muted small">Сопроводительное письмо пишется под конкретную вакансию: оно есть во втором пути.</p>}
+          {quick && <p className="muted small">Сопроводительное письмо и сообщение менеджеру пишутся под конкретную вакансию: они есть во втором пути.</p>}
           <div className="row gap">
-            <button className="btn secondary" onClick={() => setItems(itemList.map(([k]) => k))}>{quick ? "Оба" : "Все три"}</button>
+            <button className="btn secondary" onClick={() => setItems(itemList.map(([k]) => k))}>Всё сразу</button>
             <button className="btn" disabled={!items.some((i) => itemList.some(([k]) => k === i))}
               onClick={() => quick
                 ? run("Готовлю черновик", async () => {
-                  setItems(items.filter((i) => i !== "letter"));
+                  const its = items.filter((i) => !TARGET_ONLY.includes(i));
+                  setItems(its);
                   setTarget(await api<Target>("/targets/general", { method: "POST", json: { role: role.trim() || null } }));
                   setPackageId(undefined);
-                  setStep("scheme");
+                  setStep(its.some((i) => FILE_ITEMS.includes(i)) ? "scheme" : "result");  // только тексты: без схемы
                 })
-                : setStep("scheme")}>Дальше</button>
+                : setStep(items.some((i) => FILE_ITEMS.includes(i)) ? "scheme" : "result")}>Дальше</button>
           </div>
         </div>
       )}
 
       {step === "scheme" && (
         <Schemes value={scheme} onChange={setScheme} targetId={quick ? undefined : target?.id}
-          onNext={() => setStep(items.some((i) => i !== "letter") ? "photo" : "result")} />
+          onNext={() => setStep(items.some((i) => i === "cv" || i === "one_page") ? "photo" : "result")} />
       )}
 
       {step === "photo" && <Photo disabled={!!busy} onNext={() => setStep("result")} />}
@@ -573,19 +589,20 @@ function Result(props: {
   const sendToChat = async () => {
     setSent("sending");
     try {
-      const r = await api<{ sent: number; skipped: string[] }>(`/packages/${pkg!.id}/send`, {
+      const r = await api<{ sent: number; texts?: number; skipped: string[] }>(`/packages/${pkg!.id}/send`, {
         method: "POST", json: { accept_flags: accept } });
       setSent(`✓ Отправил в чат с ботом: ${r.sent} ${r.sent === 1 ? "файл" : r.sent < 5 ? "файла" : "файлов"}`
-        + (r.skipped.length ? ". Письмо ждёт подтверждения" : ""));
+        + (r.texts ? " и тексты для копирования" : "") + (r.skipped.length ? ". Письмо ждёт подтверждения" : ""));
     } catch (e: any) {
       setSent(`⚠️ ${e.message}`);
     }
   };
-  const downloadItem = async (it: string) => {
-    setLoadingItem(it);
+  const downloadItem = async (it: string, fmt: "pdf" | "docx" = "pdf") => {
+    setLoadingItem(`${it}:${fmt}`);
+    const q = [fmt === "docx" ? "fmt=docx" : "", it === "letter" && accept ? "accept_flags=true" : ""].filter(Boolean).join("&");
     try {
-      await download(`/packages/${pkg!.id}/file/${it}${it === "letter" && accept ? "?accept_flags=true" : ""}`,
-        pkg!.file_names?.[it] || `${FILE_NAMES[it]}_v${pkg!.version}.pdf`);  // Имя_Фамилия_Резюме_Роль_Компания.pdf
+      await download(`/packages/${pkg!.id}/file/${it}${q ? `?${q}` : ""}`,
+        (fmt === "docx" ? pkg!.docx_names?.[it] : pkg!.file_names?.[it]) || `${FILE_NAMES[it]}_v${pkg!.version}.${fmt}`);
     } finally {
       setLoadingItem("");
     }
@@ -608,8 +625,8 @@ function Result(props: {
     const p = await api<Pkg>(`/packages/${id}`);
     setPkg(p);
     setPreviews({});
-    for (const it of p.items) {
-      const letterBlocked = it === "letter" && p.flags.some((f) => f.where !== "cv");
+    for (const it of p.items.filter((i) => FILE_ITEMS.includes(i))) {
+      const letterBlocked = it === "letter" && p.flags.some(isLetterFlag);
       if (letterBlocked) continue;
       try {
         const b = await api<Blob>(`/packages/${id}/file/${it}?preview=true`);
@@ -620,6 +637,11 @@ function Result(props: {
   };
 
   const { brand } = useBrand(target.general ? undefined : target.id);
+  const [salary, setSalary] = useState<Salary | null>(null);
+  useEffect(() => {
+    if (pkg) api<Salary>(`/targets/${target.id}/salary`).then(setSalary)
+      .catch(() => setSalary({ n: 0, median: null, reason: "Не получилось посчитать ориентир. Попробуйте позже." }));
+  }, [pkg?.id]);
   useEffect(() => { api<Scheme[]>("/schemes").then(setSchemes).catch(() => {}); }, []);
   useEffect(() => {  // письмо с неподтверждёнными фактами показываем только после явного согласия
     if (!accept || !pkg?.items.includes("letter")) return;
@@ -647,7 +669,9 @@ function Result(props: {
   }
   if (!pkg) return busy ? null : <Working stages={["Загружаю документы"]} />;
   const cvFlags = pkg.flags.filter((f) => f.where === "cv");
-  const letterFlags = pkg.flags.filter((f) => f.where !== "cv");
+  const letterFlags = pkg.flags.filter(isLetterFlag);
+  const extraFlags = pkg.flags.filter((f) => EXTRA_WHERE.includes(f.where));
+  const fileItems = pkg.items.filter((i) => FILE_ITEMS.includes(i));
   return (
     <div className="stack">
       <div className="card stack">
@@ -656,8 +680,9 @@ function Result(props: {
           <div className="banner">Убрал из резюме то, что не подтверждается вашим профилем:
             <ul>{cvFlags.map((f) => <li key={f.text}>{f.text}</li>)}</ul></div>
         )}
-        <div className="previews">
-          {pkg.items.map((it) => (
+        {pkg.score && pkg.score.before != null && pkg.score.after != null && <ScoreLine s={pkg.score} />}
+        <div className="previews" hidden={!fileItems.length}>
+          {fileItems.map((it) => (
             <div key={it} className="preview">
               {previews[it] ? <img src={previews[it]} alt="" /> : (
                 <div className="ph muted small">
@@ -666,15 +691,32 @@ function Result(props: {
                 </div>
               )}
               <button className={`btn ${inTelegram() ? "secondary" : ""}`}
-                disabled={(it === "letter" && letterFlags.length > 0 && !accept) || loadingItem === it}
+                disabled={(it === "letter" && letterFlags.length > 0 && !accept) || loadingItem === `${it}:pdf`}
                 onClick={() => downloadItem(it)}>
-                {loadingItem === it ? "Скачиваю…" : `${ITEMS.find(([k]) => k === it)?.[1]} · PDF`}
+                {loadingItem === `${it}:pdf` ? "Скачиваю…" : `${ITEMS.find(([k]) => k === it)?.[1]} · PDF`}
+              </button>
+              <button className="btn secondary small-btn"
+                disabled={(it === "letter" && letterFlags.length > 0 && !accept) || loadingItem === `${it}:docx`}
+                onClick={() => downloadItem(it, "docx")}>
+                {loadingItem === `${it}:docx` ? "Скачиваю…" : "Word (DOCX)"}
               </button>
             </div>
           ))}
         </div>
+        {pkg.items.includes("message") && pkg.recruiter_message && (
+          <TextBlock title="Сообщение нанимающему менеджеру" text={pkg.recruiter_message}
+            note="Для LinkedIn или почты. Имя менеджера подставьте сами." />
+        )}
+        {pkg.items.includes("linkedin") && pkg.linkedin_text && (
+          <TextBlock title="Профиль LinkedIn" text={pkg.linkedin_text}
+            note="Скопируйте разделы в соответствующие поля профиля." />
+        )}
+        {extraFlags.length > 0 && (
+          <div className="banner">В этих текстах есть утверждения, которых нет в вашем профиле. Проверьте их:
+            <ul>{extraFlags.map((f) => <li key={f.text}>{f.text} — {f.reason}</li>)}</ul></div>
+        )}
         <button className={`btn ${inTelegram() ? "" : "secondary"}`} disabled={sent === "sending"} onClick={sendToChat}>
-          {sent === "sending" ? "Отправляю в Telegram…" : "Прислать все файлы в Telegram"}
+          {sent === "sending" ? "Отправляю в Telegram…" : "Прислать всё в Telegram"}
         </button>
         {sent && sent !== "sending" && <div className={`banner ${sent.startsWith("✓") ? "ok" : "error"}`}>{sent}</div>}
         {letterFlags.length > 0 && (
@@ -686,7 +728,12 @@ function Result(props: {
         )}
       </div>
 
-      <div className="card stack">
+      {salary ? <SalaryCard s={salary} /> : (
+        <div className="card stack small-gap"><h2>Ориентир по зарплате</h2>
+          <p className="muted small"><span className="spinner" /> Считаю по открытым данным «Работы России»…</p></div>
+      )}
+
+      <div className="card stack" hidden={!fileItems.length}>
         <h2>Цветовая схема</h2>
         <div className="row gap wrap">
           {[...(brand?.scheme ? [brand.scheme] : []),
@@ -733,6 +780,53 @@ function Result(props: {
         </div>
       )}
       <button className="btn secondary" onClick={onNew}>{onTarget ? "В начало" : "Новая вакансия"}</button>
+    </div>
+  );
+}
+
+// П4: балл до и после. Под вакансию: соответствие требованиям; без вакансии: качество по проверкам /check
+function ScoreLine({ s }: { s: Score }) {
+  const d = (s.after ?? 0) - (s.before ?? 0);
+  return (
+    <div className="score-line">
+      <span className="muted small">{s.title}</span>
+      <b>{s.before} → {s.after}</b><span className="muted small">из 100{d ? ` (${d > 0 ? "+" : ""}${d})` : ""}</span>
+      <span className="muted small">{s.kind === "vacancy" ? "насколько резюме подходит под требования вакансии"
+        : "цифры в результатах, объём, даты, контакты, разделы"}</span>
+    </div>
+  );
+}
+
+// П5, П3: тексты для копирования
+function TextBlock({ title, text, note }: { title: string; text: string; note?: string }) {
+  const [done, setDone] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 2000); }
+    catch { /* нет доступа к буферу: текст можно выделить руками */ }
+  };
+  return (
+    <div className="text-block stack small-gap">
+      <div className="row gap wrap"><b>{title}</b>
+        <button className="btn secondary small-btn" onClick={copy}>{done ? "✓ Скопировано" : "Скопировать"}</button></div>
+      {note && <span className="muted small">{note}</span>}
+      <pre className="text-body">{text}</pre>
+    </div>
+  );
+}
+
+// П6: ориентир по зарплате из открытых данных, с датой и источником
+function SalaryCard({ s }: { s: Salary }) {
+  const rub = (x?: number | null) => (x ?? 0).toLocaleString("ru-RU") + " ₽";
+  return (
+    <div className="card stack small-gap">
+      <h2>Ориентир по зарплате</h2>
+      {s.median ? (
+        <>
+          <p><b>{rub(s.median)}</b> медиана · обычно {rub(s.p25)} - {rub(s.p75)}</p>
+          <p className="muted small">«{s.role}», {s.scope}, по {s.n} вакансиям с указанной зарплатой.
+            Источник: <a href={s.url} target="_blank" rel="noreferrer">{s.source}</a>, {s.date}. {s.caveat}</p>
+        </>
+      ) : <p className="muted small">{s.reason || "Данных нет."}</p>}
     </div>
   );
 }

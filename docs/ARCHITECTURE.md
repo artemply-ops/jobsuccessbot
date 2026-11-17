@@ -85,6 +85,11 @@ PWA и сайт в браузере ───┘        │
 | Способы входа, объединение кабинетов | `services/accounts.py`, `api/auth_routes.py`, `web/src/pages/Auth.tsx` |
 | Модель для шага | `.env`: `LLM_MODEL_MAIN`, `LLM_MODEL_SCORING`, `LLM_MODEL_VISION` |
 | Домен | `.env`: `DOMAIN` (Caddy, можно несколько через запятую) и `PUBLIC_URL` |
+| Состав пакета (документы) | `schemas.PACKAGE_ITEMS`, `FILE_ITEMS` (файлы), `TARGET_ONLY_ITEMS` (только под вакансию); генерация `services/tailor.py` (`SYSTEM_MESSAGE`, `SYSTEM_LINKEDIN`), выдача `services/export.py` |
+| Word (DOCX) | `export.render_docx`, `GET /api/packages/{id}/file/{item}?fmt=docx` |
+| Балл до и после | `review.score_before_after` |
+| Ориентир по зарплате | `services/salary.py`, `GET /api/targets/{id}/salary`, в боте отдельным сообщением фоном |
+| Тексты бота | `services/site_texts.py` раздел `bot` (админка /admin/texts), `bot_answer` в боте |
 
 ## Биллинг
 

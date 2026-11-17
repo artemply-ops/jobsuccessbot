@@ -1,7 +1,10 @@
-"""Этап 4 пивота. Сценарий бота «резюме под вакансию»:
+"""Этап 4 пивота. Сценарий бота, как мастер на сайте (Р5, 17.11.2026):
 
-материалы (файл, фото, голос, текст) -> вакансия (ссылка или текст) -> 2-3 уточнения -> выбор документов
-(резюме, one pager, письмо: любой набор) -> цветовая схема -> фото (необязательно) -> файлы -> одна правка.
+материалы (файл, фото, голос, текст) -> имя -> развилка:
+- быстро: желаемая должность (необязательно) -> документы -> схема -> фото -> файлы;
+- под вакансию: вакансия (ссылка или текст) -> 2-3 уточнения -> документы -> схема -> фото -> файлы + покрытие.
+Документы: резюме, одностраничник, письмо, сообщение менеджеру, профиль LinkedIn (любой набор). Тексты шагов
+правятся в админке (services/site_texts, раздел «Бот»).
 Состояния в памяти процесса (MemoryStorage): после перезапуска пользователь продолжает с шага вакансии.
 """
 
@@ -20,13 +23,16 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.jobs import build_profile_job, improve_job, tailor_job
 from app.models import Contact, Package, Target, User, Vacancy
-from app.schemas import PACKAGE_ITEMS
+from app.schemas import FILE_ITEMS, PACKAGE_ITEMS, TARGET_ONLY_ITEMS
 from app.services import cv_render, export, intake, llm, profile
+from app.services.site_texts import bot_answer
 
 log = logging.getLogger("bot.cv")
 router = Router(name="cv_flow")
 
-ITEM_TITLES = {"cv": "Резюме", "one_page": "Одностраничник", "letter": "Сопроводительное письмо"}
+ITEM_TITLES = {"cv": "Резюме", "one_page": "Одностраничник", "letter": "Сопроводительное письмо",
+               "message": "Сообщение менеджеру", "linkedin": "Профиль LinkedIn"}
+DEFAULT_ITEMS = {"target": ["cv", "one_page", "letter"], "quick": ["cv", "one_page"]}
 URL_RE = re.compile(r"^\s*(https?://|www\.)\S+\s*$|^\s*[\w-]+(\.[\w-]+)+/\S*\s*$", re.IGNORECASE)
 
 
@@ -41,27 +47,34 @@ class CV(StatesGroup):
     revise = State()
     name = State()
     facts = State()
+    role = State()
 
 
 def is_url(text: str) -> bool:
     return bool(URL_RE.match(text or ""))
 
 
-def items_kb(selected: list[str]) -> InlineKeyboardMarkup:
+def allowed_items(general: bool = False) -> list[str]:
+    """Без вакансии письмо и сообщение менеджеру писать не о чем."""
+    return [i for i in PACKAGE_ITEMS if not (general and i in TARGET_ONLY_ITEMS)]
+
+
+def items_kb(selected: list[str], general: bool = False) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=("☑ " if i in selected else "☐ ") + ITEM_TITLES[i], callback_data=f"cvi:{i}")]
-            for i in PACKAGE_ITEMS]
-    rows.append([InlineKeyboardButton(text="Все три", callback_data="cvi:all"),
+            for i in allowed_items(general)]
+    rows.append([InlineKeyboardButton(text="Всё сразу", callback_data="cvi:all"),
                  InlineKeyboardButton(text="Дальше →", callback_data="cvi:next")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def toggle(selected: list[str], item: str) -> list[str]:
+def toggle(selected: list[str], item: str, general: bool = False) -> list[str]:
+    allowed = allowed_items(general)
     if item == "all":
-        return list(PACKAGE_ITEMS)
-    if item not in PACKAGE_ITEMS:
+        return allowed
+    if item not in allowed:
         return selected
     out = [i for i in selected if i != item] if item in selected else selected + [item]
-    return [i for i in PACKAGE_ITEMS if i in out]
+    return [i for i in allowed if i in out]
 
 
 def scheme_kb(prefix: str = "cvs", company: tuple[str, str] | None = None) -> InlineKeyboardMarkup:
@@ -146,19 +159,13 @@ async def _error(message: Message, e: Exception, where: str):
 
 # ---------- Шаг 1. Материалы ----------
 
-START_TEXT = ("Сделаю резюме и сопроводительное письмо под конкретную вакансию.\n\n"
-              "<b>Шаг 1.</b> Пришлите ваше резюме: файл (PDF, DOCX), скан или фото. Можно добавить рассказ о себе "
-              "текстом или голосовыми: чем занимались, какие результаты с цифрами.\n\n"
-              "Когда всё пришлёте, нажмите «Готово».")
-
-
 def done_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Готово, дальше →", callback_data="cv:done")]])
 
 
 async def start_flow(message: Message, state: FSMContext):
     await state.set_state(CV.materials)
-    await message.answer(START_TEXT, reply_markup=done_kb())
+    await bot_answer(message, "start", reply_markup=done_kb())
 
 
 @router.message(Command("new"))
@@ -204,6 +211,7 @@ STAGES_CLARIFY = ["Сравниваю профиль с вакансией", "И
 STAGES_ANSWERS = ["Добавляю ответы в профиль", "Обновляю профиль"]
 STAGES_TAILOR = ["Изучаю компанию", "Пишу резюме под вакансию", "Пишу письмо", "Проверяю каждый факт по профилю",
                  "Собираю PDF"]
+STAGES_GENERAL = ["Навожу порядок в опыте", "Пишу резюме", "Проверяю каждый факт по профилю", "Собираю PDF"]
 SPIN = "◐◓◑◒"
 
 
@@ -279,7 +287,7 @@ async def ask_name(message: Message, state: FSMContext, user_id: int):
 async def on_name(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     if cb.data == "cv:name_ok":
-        await ask_vacancy(cb.message, state)
+        await ask_path(cb.message, state)
         return
     await state.set_state(CV.name)
     await cb.message.answer("Напишите имя и фамилию так, как они должны стоять в резюме.")
@@ -296,7 +304,7 @@ async def take_name(message: Message, state: FSMContext, text: str):
         c.full_name = name
         await s.commit()
     await message.answer(f"Записал: <b>{html.escape(name)}</b>")
-    await ask_vacancy(message, state)
+    await ask_path(message, state)
 
 
 async def _run(fn) -> dict:
@@ -310,12 +318,47 @@ async def _run(fn) -> dict:
             raise
 
 
+# ---------- Развилка: быстро или под вакансию (Р5) ----------
+
+async def ask_path(message: Message, state: FSMContext):
+    await state.set_state(None)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚡ Резюме из опыта, ~2 минуты", callback_data="cv:quick")],
+        [InlineKeyboardButton(text="🎯 Под конкретную вакансию", callback_data="cv:target")]])
+    await bot_answer(message, "path", reply_markup=kb)
+
+
+@router.callback_query(F.data.in_({"cv:quick", "cv:target"}))
+async def on_path(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    if cb.data == "cv:target":
+        await ask_vacancy(cb.message, state)
+        return
+    await state.set_state(CV.role)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Пропустить", callback_data="cv:norole")]])
+    await bot_answer(cb.message, "role", reply_markup=kb)
+
+
+async def start_quick(message: Message, state: FSMContext, tg_user, role: str | None):
+    user = await _user(tg_user)
+    async with SessionLocal() as s:
+        t = await intake.add_general_target(s, await s.get(User, user.id), (role or "").strip()[:120] or None)
+        await s.commit()
+    await state.update_data(target_id=t.id, general=True, items=list(DEFAULT_ITEMS["quick"]))
+    await ask_items(message, state)
+
+
+@router.callback_query(F.data == "cv:norole")
+async def on_no_role(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await start_quick(cb.message, state, cb.from_user, None)
+
+
 # ---------- Шаг 2. Вакансия ----------
 
 async def ask_vacancy(message: Message, state: FSMContext):
     await state.set_state(CV.vacancy)
-    await message.answer("<b>Шаг 2.</b> Пришлите ссылку на вакансию на сайте компании или вставьте её текст.\n"
-                         "<i>Ссылки hh.ru я не открываю: оттуда скопируйте текст.</i>")
+    await bot_answer(message, "vacancy")
 
 
 async def take_vacancy(message: Message, state: FSMContext, text: str):
@@ -338,7 +381,7 @@ async def take_vacancy(message: Message, state: FSMContext, text: str):
     except Exception as e:
         await _error(message, e, "add_target")
         return
-    await state.update_data(target_id=t.id, items=list(PACKAGE_ITEMS))
+    await state.update_data(target_id=t.id, general=False, items=list(DEFAULT_ITEMS["target"]))
     p = t.parsed
     reqs = "\n".join(f"• {html.escape(r)}" for r in (p.get("requirements") or [])[:6])
     await message.answer(f"<b>{html.escape(v.title)}</b> · {html.escape(v.company_name)}"
@@ -430,7 +473,7 @@ async def on_no_answers(cb: CallbackQuery, state: FSMContext):
 async def ask_items(message: Message, state: FSMContext):
     await state.set_state(CV.items)
     data = await state.get_data()
-    await message.answer("<b>Шаг 4.</b> Что подготовить? Отметьте нужное.", reply_markup=items_kb(data.get("items", [])))
+    await bot_answer(message, "items", reply_markup=items_kb(data.get("items", []), data.get("general", False)))
 
 
 @router.callback_query(F.data.startswith("cvi:"))
@@ -444,17 +487,22 @@ async def on_item(cb: CallbackQuery, state: FSMContext):
         await cb.answer()
         await ask_scheme(cb.message, state)
         return
-    items = toggle(data.get("items", []), item)
+    general = data.get("general", False)
+    items = toggle(data.get("items", []), item, general)
     await state.update_data(items=items)
     await cb.answer()
-    await cb.message.edit_reply_markup(reply_markup=items_kb(items))
+    await cb.message.edit_reply_markup(reply_markup=items_kb(items, general))
 
 
 # ---------- Шаг 5. Схема и фото ----------
 
 async def ask_scheme(message: Message, state: FSMContext):
     await state.set_state(CV.scheme)
-    company = await company_scheme((await state.get_data()).get("target_id"))
+    data = await state.get_data()
+    if not ({"cv", "one_page", "letter"} & set(data.get("items", []))):  # только тексты: схема и фото не нужны
+        await generate(message, state, message.chat)
+        return
+    company = None if data.get("general") else await company_scheme(data.get("target_id"))
     note = "\n🎨 Первой кнопкой: схема в цветах компании, куда вы подаётесь." if company else ""
     await message.answer_photo(BufferedInputFile(schemes_preview(), "schemes.png"),
                                caption=f"<b>Шаг 5.</b> Выберите цветовую схему (слева направо, как в списке).{note}",
@@ -532,8 +580,9 @@ async def generate(message: Message, state: FSMContext, tg_user, instruction: st
         return
     llm.track(user.id, action)
     try:
-        async with working(message, STAGES_TAILOR, every=4.0):
-            res = await _run(tailor_job(user.id, data["target_id"], data.get("items") or list(PACKAGE_ITEMS),
+        stages = STAGES_GENERAL if data.get("general") else STAGES_TAILOR
+        async with working(message, stages, every=4.0):
+            res = await _run(tailor_job(user.id, data["target_id"], data.get("items") or list(DEFAULT_ITEMS["target"]),
                                         data.get("scheme", "graphite"), instruction))
     except Exception as e:
         await _error(message, e, "tailor")
@@ -556,22 +605,40 @@ async def send_files(message: Message, package_id: int, accept_flags: bool = Fal
         contact = await s.get(Contact, pkg.user_id)
         vacancy = await s.get(Vacancy, pkg.vacancy_id)
     photo = _photo(contact)
+    from app.services.notify import text_chunks
+
     cv_flags = [f for f in pkg.fact_flags or [] if f.get("where") == "cv"]
-    letter_flags = [f for f in pkg.fact_flags or [] if f.get("where") != "cv"]
+    letter_flags = export.letter_flags(pkg)
+    extra_flags = [f for f in pkg.fact_flags or [] if f.get("where") in export.EXTRA_WHERE]
     if cv_flags and not accept_flags:
         await message.answer("ℹ️ Убрал из резюме то, что не подтверждается вашим профилем:\n" + "\n".join(
             f"• {html.escape(f['text'])}" for f in cv_flags))
-    for item in pkg.items or []:
+    for item in [i for i in pkg.items or [] if i in FILE_ITEMS]:
         if item == "letter" and letter_flags and not accept_flags:
             continue
         try:
             data = export.render_item(pkg, contact, item, photo, accept_flags=accept_flags,
                                       company=vacancy.company_name, position=vacancy.title)
+            name = export.file_name(item, pkg, contact, vacancy.title, vacancy.company_name)
+            await message.answer_document(BufferedInputFile(data, name))
+            if item == "cv":  # П7: резюме и в Word
+                docx = export.render_docx(pkg, contact, item)
+                await message.answer_document(BufferedInputFile(
+                    docx, export.file_name(item, pkg, contact, vacancy.title, vacancy.company_name, ext="docx")))
         except Exception as e:
             await _error(message, e, f"render {item}")
             continue
-        name = export.file_name(item, pkg, contact, vacancy.title, vacancy.company_name)
-        await message.answer_document(BufferedInputFile(data, name))
+    view = export.tailored_view(pkg, contact)
+    texts = []
+    if "message" in (pkg.items or []) and view["recruiter_message"]:
+        texts += text_chunks("Сообщение нанимающему менеджеру", view["recruiter_message"])
+    if "linkedin" in (pkg.items or []) and view["linkedin"]:
+        texts += text_chunks("Профиль LinkedIn", export.linkedin_text(view["linkedin"]))
+    for t in texts:
+        await message.answer(t, disable_web_page_preview=True)
+    if extra_flags:
+        await message.answer("⚠️ В этих текстах есть утверждения, которых нет в вашем профиле. Проверьте их:\n" + "\n".join(
+            f"• {html.escape(f['text'])} — {html.escape(f['reason'])}" for f in extra_flags))
     kb = []
     if "letter" in (pkg.items or []) and letter_flags and not accept_flags:
         await message.answer("⚠️ В письме есть утверждения, которых нет в вашем профиле:\n" + "\n".join(
@@ -585,7 +652,12 @@ async def send_files(message: Message, package_id: int, accept_flags: bool = Fal
         target = await s.get(Target, pkg.target_id) if pkg.target_id else None
         _, improve_left = await revisions(s, pkg.user_id, pkg.target_id) if pkg.target_id else (True, 0)
         revision_free = await billing.can(s, await s.get(User, pkg.user_id), "revision")
+        from app.services import review
+
+        score = await review.score_before_after(s, pkg, target, view)
         await s.commit()
+    if score and score.get("before") is not None and score.get("after") is not None:  # П4
+        await message.answer(score_text(score))
     if pkg.coverage:  # проверка после генерации и предложение перегенерировать
         await message.answer(coverage_text(pkg.coverage, target.coverage if target else None))
         if improve_left > 0:
@@ -595,9 +667,47 @@ async def send_files(message: Message, package_id: int, accept_flags: bool = Fal
     if pkg.target_id:
         price = "" if revision_free else f" · {billing.PRODUCTS['revision'].price_stars} ⭐"
         kb.append([InlineKeyboardButton(text=f"✏️ Внести правку{price}", callback_data=f"cvr:{pkg.id}")])
-    kb.append([InlineKeyboardButton(text="🎨 Другая цветовая схема", callback_data=f"cvc:{pkg.id}")])
+    if {"cv", "one_page", "letter"} & set(pkg.items or []):
+        kb.append([InlineKeyboardButton(text="🎨 Другая цветовая схема", callback_data=f"cvc:{pkg.id}")])
     kb.append([InlineKeyboardButton(text="Новая вакансия", callback_data="cv:new")])
-    await message.answer("Готово. Что дальше?", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    if target is not None and not intake.is_general(target):
+        kb.append([InlineKeyboardButton(text="⚡ Резюме из опыта без вакансии", callback_data="cv:quick")])
+    elif target is not None:
+        kb[-1] = [InlineKeyboardButton(text="🎯 Подготовиться к вакансии", callback_data="cv:new")]
+    await bot_answer(message, "done", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    if target is not None:  # П6: источник медленный, ориентир приходит отдельным сообщением и ничего не держит
+        import asyncio
+
+        _bg.add(t := asyncio.create_task(send_salary(message, target, vacancy, pkg.user_id)))
+        t.add_done_callback(_bg.discard)
+
+
+_bg: set = set()
+
+
+async def send_salary(message: Message, target: Target, vacancy: Vacancy, user_id: int):
+    """Ориентир по зарплате из открытых данных. Источник не ответил или данных мало: просто молчим."""
+    try:
+        from app.services import salary
+
+        async with SessionLocal() as s:
+            prof = await profile.latest_profile(s, user_id)
+        role, city = salary.role_and_city(target, vacancy, prof.data if prof else None)
+        res = await salary.estimate(role, city)
+        if res.get("median"):
+            await message.answer(salary.text(res), disable_web_page_preview=True)
+    except Exception:
+        log.warning("salary in bot failed", exc_info=True)
+
+
+def score_text(score: dict) -> str:
+    """П4: балл до и после одной строкой."""
+    b, a = score["before"], score["after"]
+    diff = a - b
+    trend = f" (+{diff})" if diff > 0 else f" ({diff})" if diff < 0 else ""
+    note = ("насколько резюме подходит под требования вакансии" if score["kind"] == "vacancy"
+            else "цифры в результатах, объём, даты, контакты, разделы")
+    return f"📈 <b>{score['title']}: было {b}, стало {a} из 100</b>{trend}\n<i>{note}</i>"
 
 
 def coverage_text(cov: dict, before: dict | None) -> str:
@@ -797,6 +907,8 @@ async def handle_text(message: Message, state: FSMContext, text: str, kind: str 
         await take_name(message, state, text)
     elif st == CV.facts.state:
         await take_facts(message, state, text)
+    elif st == CV.role.state:
+        await start_quick(message, state, message.from_user, text)
     elif st in (CV.items.state, CV.scheme.state, CV.photo.state):
         await message.answer("Выберите вариант кнопками выше.")
     else:

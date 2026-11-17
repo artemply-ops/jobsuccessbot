@@ -135,7 +135,7 @@ class PackageDraft(BaseModel):
 
 class FactFlag(BaseModel):
     text: str = Field(description="утверждение из CV или письма")
-    where: str = Field(description="cv | cover_letter | recruiter_message")
+    where: str = Field(description="cv | cover_letter | recruiter_message | linkedin")
     reason: str = Field(description="почему не подтверждается профилем")
     severity: str = Field("high", description="high: выдумано или преувеличено; low: допустимо, мелкая неточность")
 
@@ -169,7 +169,10 @@ class ClarifyQuestions(BaseModel):
 
 # ---------- Пакет под вакансию (этап 3 пивота) ----------
 
-PACKAGE_ITEMS = ("cv", "one_page", "letter")  # полное резюме, одностраничник, сопроводительное письмо
+# полное резюме, одностраничник, сопроводительное письмо, сообщение нанимающему менеджеру (П5), профиль LinkedIn (П3)
+PACKAGE_ITEMS = ("cv", "one_page", "letter", "message", "linkedin")
+FILE_ITEMS = ("cv", "one_page", "letter")  # документы-файлы (PDF, DOCX); message и linkedin это тексты
+TARGET_ONLY_ITEMS = ("letter", "message")  # без вакансии писать не о чем
 
 
 class TailoredCV(BaseModel):
@@ -183,3 +186,22 @@ class TailoredLetter(BaseModel):
 class TailoredBoth(BaseModel):
     cv: CV
     cover_letter: str
+
+
+class LinkedInRole(BaseModel):
+    role: str
+    company: str
+    period: str
+    text: str = Field(description="описание роли для LinkedIn: 2-4 строки, результаты с цифрами из профиля")
+
+
+class LinkedIn(BaseModel):
+    headline: str = Field(description="заголовок профиля, до 220 знаков: роль, специализация, ключевая сила")
+    about: str = Field(description="раздел About, 120-250 слов, от первого лица, абзацами")
+    experience: list[LinkedInRole] = Field(default_factory=list, description="роли из профиля, свежие сверху, до 6")
+    skills: list[str] = Field(default_factory=list, description="до 15 навыков для раздела Skills")
+
+
+class Extras(BaseModel):
+    recruiter_message: str = Field("", description="сообщение нанимающему менеджеру; пусто, если не просили")
+    linkedin: LinkedIn | None = Field(None, description="профиль LinkedIn; null, если не просили")
