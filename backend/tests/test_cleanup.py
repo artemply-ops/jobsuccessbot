@@ -89,3 +89,31 @@ async def test_keep_active_paid_signed_in_and_fresh(session):
     await cleanup.purge_stale_guests(session)
     async with SessionLocal() as s:
         assert len((await s.execute(select(User.id).where(User.id.in_(ids)))).all()) == 4
+
+
+async def test_guest_limit_survives_restart_and_expired_rows_purged(session, monkeypatch):
+    from app.models import LoginCode, RateHit
+    from app.services import accounts
+
+    monkeypatch.setattr(get_settings(), "guests_per_ip_day", 2)
+    ip = "203.0.113.77"
+    for _ in range(2):
+        await accounts.create_guest(session, ip)
+    await session.commit()
+    # «перезапуск»: в памяти ничего нет, счётчик читается из БД
+    async with SessionLocal() as s:
+        try:
+            await accounts.create_guest(s, ip)
+            raise AssertionError("лимит не сработал")
+        except accounts.AccountError:
+            pass
+        await accounts.create_guest(s, "203.0.113.78")  # другой адрес не задет
+        hits = (await s.execute(select(RateHit))).scalars().all()
+        assert all(ip not in h.key for h in hits)  # IP хранится только хэшем
+
+        old = datetime.now(timezone.utc) - timedelta(days=3)
+        s.add_all([RateHit(key="guest:old", created_at=old),
+                   LoginCode(email_hash="x", code_hash="y", expires_at=old)])
+        await s.commit()
+        assert await cleanup.purge_expired(s) >= 2
+        assert not (await s.execute(select(RateHit).where(RateHit.key == "guest:old"))).first()

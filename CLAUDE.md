@@ -63,3 +63,5 @@ OpenRouter, OpenAI-совместимый API, ответ строго по JSON
 - Бот: `cd backend; .venv\Scripts\python -m app.bot`
 - Фронт dev: `cd web; npm run dev` (прокси /api на :8000), сборка `npm run build`
 - Каталог: POST `/api/admin/seed`, затем `/api/admin/discover`
+- Миграция БД (любое изменение моделей): `cd backend; $env:PYTHONUTF8=1; $env:PYTHONPATH='.'; .venv\Scripts\python -m alembic revision --autogenerate -m "что меняем"`,
+  проверить файл глазами; на сервере применяется сама при старте app (`db.init_db`)

@@ -195,6 +195,7 @@ async def scheduler_loop(interval_hours: int = 24) -> None:
         try:  # Т4: брошенные гостевые кабинеты старше 30 дней
             async with SessionLocal() as s:
                 log.info("stale guests purged: %s", await cleanup.purge_stale_guests(s))
+                log.info("expired service rows purged: %s", await cleanup.purge_expired(s))
         except Exception:
             log.exception("guest cleanup failed")
         await asyncio.sleep(interval_hours * 3600)

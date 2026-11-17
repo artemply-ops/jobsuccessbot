@@ -23,3 +23,4 @@ aiohttp-socks>=0.9
 pymupdf>=1.24,<2  # 2.x тянет onnxruntime и numpy (~200 МБ), нам не нужно
 pytesseract>=0.3.10
 pywebpush>=2.5,<3
+alembic>=1.13,<2

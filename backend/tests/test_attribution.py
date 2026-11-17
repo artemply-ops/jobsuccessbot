@@ -1,11 +1,12 @@
 """Учёт источников: метка первого касания на сайте, в боте и Mini App, перенос при объединении, отчёт в админке."""
 
 import httpx
+from sqlalchemy import delete
 
 from app.config import get_settings
 from app.db import SessionLocal, init_db
 from app.main import app
-from app.models import User
+from app.models import RateHit, User
 from app.services import accounts, attribution
 
 
@@ -33,7 +34,9 @@ def test_assign_is_first_touch_only():
 
 async def test_guest_gets_source_from_header_and_report_groups_by_channel(monkeypatch):
     await init_db()
-    accounts._guest_hits.clear()
+    async with SessionLocal() as s:  # лимит гостей с одного IP общий для всех тестов
+        await s.execute(delete(RateHit))
+        await s.commit()
     monkeypatch.setattr(get_settings(), "admin_tg_ids", [1])
     async with _client() as c:
         ids = []

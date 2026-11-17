@@ -15,12 +15,40 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def init_db() -> None:
+    """Схема БД. С 17.11.2026 изменения идут миграциями Alembic (backend/migrations, Т3).
+    Новая база: create_all по моделям и отметка последней ревизии. Существующая: сначала миграции,
+    потом create_all и досоздание колонок как страховка (если миграцию забыли, приложение всё равно поднимется)."""
     from app import models  # noqa: F401  регистрация таблиц
 
     async with engine.begin() as conn:
+        fresh = not await conn.run_sync(lambda c: _inspect(c).has_table("users"))
+        if not fresh:
+            await conn.run_sync(_migrate, False)
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_add_missing_columns)
         await conn.run_sync(_widen_columns)
+        if fresh:
+            await conn.run_sync(_migrate, True)
+
+
+def _inspect(conn):
+    from sqlalchemy import inspect
+
+    return inspect(conn)
+
+
+def _migrate(conn, fresh: bool) -> None:
+    """Базе без отметки Alembic ставим базовую ревизию (0001, прод до 17.11) или последнюю (новая база), затем upgrade."""
+    from pathlib import Path
+
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(Path(__file__).resolve().parent.parent / "alembic.ini"))
+    cfg.attributes["connection"] = conn
+    if not _inspect(conn).has_table("alembic_version"):
+        command.stamp(cfg, "head" if fresh else "0001")
+    command.upgrade(cfg, "head")
 
 
 def _add_missing_columns(conn) -> None:

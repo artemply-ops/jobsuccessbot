@@ -12,8 +12,6 @@ import hashlib
 import hmac
 import re
 import secrets
-import time
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, func, select, update
@@ -23,7 +21,7 @@ from app.config import get_settings
 from app.db import Base
 from app.services import attribution
 from app.models import (BillingUsage, CompanyScore, Contact, Grant, Identity, LlmUsage, LoginCode, LoginToken,
-                        Profile, User, VacancyScore)
+                        Profile, RateHit, User, VacancyScore)
 
 CODE_TTL = timedelta(minutes=10)
 CODE_ATTEMPTS = 5
@@ -62,17 +60,15 @@ def is_guest(user: User) -> bool:
 
 # ---------- Гость ----------
 
-_guest_hits: dict[str, list[float]] = defaultdict(list)
-
-
 async def create_guest(session: AsyncSession, ip: str, source: str | None = None) -> User:
-    """Гостевая учётка для работы на сайте без входа. Ограничение по IP от накрутки бесплатных действий."""
-    day = time.time() - 86400
-    hits = [t for t in _guest_hits[ip] if t > day]
-    if len(hits) >= get_settings().guests_per_ip_day:
+    """Гостевая учётка для работы на сайте без входа. Ограничение по IP от накрутки бесплатных действий.
+    Счётчик в БД (rate_hits), а не в памяти: перезапуск его не сбрасывает (Т2)."""
+    key = f"guest:{_h(ip or '')}"[:80]
+    n = (await session.execute(select(func.count()).select_from(RateHit).where(
+        RateHit.key == key, RateHit.created_at > _now() - timedelta(days=1)))).scalar_one()
+    if n >= get_settings().guests_per_ip_day:
         raise AccountError("Слишком много новых сессий с этого адреса. Войдите по почте или через Telegram")
-    hits.append(time.time())
-    _guest_hits[ip] = hits
+    session.add(RateHit(key=key))
     user = User(guest=True, notify_threshold=get_settings().notify_threshold)
     attribution.assign(user, source)
     session.add(user)

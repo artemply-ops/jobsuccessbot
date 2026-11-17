@@ -17,7 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import Base
-from app.models import Company, Contact, Identity, LlmUsage, Payment, Source, User, Vacancy
+from app.models import (Company, Contact, Identity, LlmUsage, LoginCode, LoginToken, Payment, RateHit, Source, User,
+                        Vacancy)
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +77,19 @@ async def purge_users(session: AsyncSession, ids: list[int]) -> int:
         except OSError:
             log.warning("cleanup: file not removed")
     return len(ids)
+
+
+async def purge_expired(session: AsyncSession) -> int:
+    """Служебные записи, которые больше не нужны: счётчики лимитов старше 2 суток, коды и ссылки входа,
+    истёкшие больше суток назад."""
+    now = datetime.now(timezone.utc)
+    n = 0
+    for stmt in (delete(RateHit).where(RateHit.created_at < now - timedelta(days=2)),
+                 delete(LoginCode).where(LoginCode.expires_at < now - timedelta(days=1)),
+                 delete(LoginToken).where(LoginToken.expires_at < now - timedelta(days=1))):
+        n += (await session.execute(stmt.execution_options(synchronize_session=False))).rowcount or 0
+    await session.commit()
+    return n
 
 
 async def purge_stale_guests(session: AsyncSession, days: int = GUEST_TTL_DAYS) -> int:

@@ -57,6 +57,16 @@ class LoginCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class RateHit(Base):
+    """Счётчик для лимитов (Т2): переживает перезапуск и работает при нескольких процессах.
+    key это вид лимита и HMAC-хэш значения (например, guest:<хэш IP>), сам IP не хранится. Чистка в cleanup."""
+
+    __tablename__ = "rate_hits"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(80), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+
+
 class LoginToken(Base):
     """Одноразовая ссылка: вход на сайт из бота (/web), возврат с Яндекс ID, привязка способа входа."""
 
