@@ -24,6 +24,13 @@ async def lifespan(_: FastAPI):
     await init_db()
     s = get_settings()
     tasks = []
+    if s.run_scheduler:  # тот же признак «главный процесс»: задачи живут здесь, хвосты прошлого процесса закрываем
+        from app.jobs import fail_interrupted
+
+        try:
+            await fail_interrupted()
+        except Exception:
+            log.exception("fail_interrupted failed")
     if s.run_scheduler:
         from app.jobs import scheduler_loop
 

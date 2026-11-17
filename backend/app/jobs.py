@@ -22,6 +22,32 @@ _tasks: set[asyncio.Task] = set()
 JobFn = Callable[[AsyncSession], Awaitable[dict]]
 
 
+INTERRUPTED = "Сборка прервалась из-за перезапуска сервера. Запустите её ещё раз, оплата не списана"
+
+
+async def fail_interrupted() -> int:
+    """Т1: задачи живут в процессе. После перезапуска queued/running от прошлого процесса уже никто не выполнит,
+    помечаем их ошибкой, иначе экран ожидания крутится вечно. Списание в tailor.build идёт после модели в той же
+    транзакции, поэтому у прерванной сборки оплата не списана. Вызывается при старте, до приёма запросов."""
+    from app.models import Job
+
+    async with SessionLocal() as s:
+        jobs = list((await s.execute(select(Job).where(Job.status.in_(("queued", "running"))))).scalars())
+        now = datetime.now(timezone.utc)
+        for j in jobs:
+            j.status, j.note, j.finished_at = "error", INTERRUPTED, now
+        await s.commit()
+    for j in jobs:  # человек мог закрыть вкладку: скажем в Telegram и пушем, что надо запустить снова
+        if j.kind in notify.STAGE_KINDS and j.user_id:
+            try:
+                await notify.stage_done(j.user_id, j.kind, False, INTERRUPTED)
+            except Exception:
+                log.exception("notify about interrupted job %s failed", j.id)
+    if jobs:
+        log.warning("marked %s interrupted jobs as error", len(jobs))
+    return len(jobs)
+
+
 async def enqueue(kind: str, user_id: int | None, fn: JobFn) -> int:
     from app.models import Job
 
@@ -159,9 +185,16 @@ async def daily_refresh() -> dict:
 
 
 async def scheduler_loop(interval_hours: int = 24) -> None:
+    from app.services import cleanup
+
     while True:
         try:
             log.info("daily refresh: %s", await daily_refresh())
         except Exception:
             log.exception("daily refresh failed")
+        try:  # Т4: брошенные гостевые кабинеты старше 30 дней
+            async with SessionLocal() as s:
+                log.info("stale guests purged: %s", await cleanup.purge_stale_guests(s))
+        except Exception:
+            log.exception("guest cleanup failed")
         await asyncio.sleep(interval_hours * 3600)
