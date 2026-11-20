@@ -17,6 +17,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.server
+      # Кэш слоёв (apt, pip) берётся из работающего образа: его не удаляет очистка Docker, пока app запущен.
+      # Кэш сборки BuildKit на общем сервере кто-то чистит (20.11.2026 apt и pip качались заново, около 15 минут)
+      cache_from: [jobsuccess-app:latest]
+      args:
+        BUILDKIT_INLINE_CACHE: "1"
     env_file: .env
     environment:
       ENV: prod
