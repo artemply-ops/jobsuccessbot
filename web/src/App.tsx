@@ -21,6 +21,7 @@ export type Me = {
   guest: boolean;  // начал на сайте без входа: документы соберёт после входа
   telegram: boolean;
   notify_threshold: number;
+  tone: "neutral" | "ty" | "vy";  // П13: стиль реплик сервиса
   is_admin: boolean;
   contact: { full_name: string | null; email: string | null; phone: string | null; city: string | null } | null;
 };

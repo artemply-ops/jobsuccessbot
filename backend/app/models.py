@@ -29,6 +29,8 @@ class User(Base):
     guest: Mapped[bool | None] = mapped_column(Boolean)
     # Метка первого касания: откуда пришёл (services/attribution.py). Только код ссылки, без данных человека
     source: Mapped[str | None] = mapped_column(String(64))
+    # П13: стиль реплик сервиса (services/remarks.py): neutral | ty | vy, пусто = нейтрально
+    tone: Mapped[str | None] = mapped_column(String(8))
 
 
 class Identity(Base):

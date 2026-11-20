@@ -24,7 +24,7 @@ from app.db import SessionLocal
 from app.jobs import build_profile_job, improve_job, tailor_job
 from app.models import Contact, Package, Target, User, Vacancy
 from app.schemas import FILE_ITEMS, PACKAGE_ITEMS, TARGET_ONLY_ITEMS
-from app.services import cv_render, export, intake, llm, profile
+from app.services import cv_render, export, intake, llm, profile, remarks
 from app.services.site_texts import bot_answer
 
 log = logging.getLogger("bot.cv")
@@ -655,11 +655,14 @@ async def send_files(message: Message, package_id: int, accept_flags: bool = Fal
         from app.services import review
 
         score = await review.score_before_after(s, pkg, target, view)
+        tone = (await s.get(User, pkg.user_id)).tone
         await s.commit()
     if score and score.get("before") is not None and score.get("after") is not None:  # П4
         await message.answer(score_text(score))
     if pkg.coverage:  # проверка после генерации и предложение перегенерировать
         await message.answer(coverage_text(pkg.coverage, target.coverage if target else None))
+    if rm := remarks.package(tone, score, pkg.coverage):  # П13
+        await message.answer(f"💬 {html.escape(rm)}")
         if improve_left > 0:
             kb.append([InlineKeyboardButton(text="🔁 Перегенерировать с учётом пробелов", callback_data=f"cvi2:{pkg.id}")])
             if any(r["status"] != "covered" and not r["in_profile"] for r in pkg.coverage.get("requirements", [])):
@@ -814,6 +817,8 @@ async def check_resume(message: Message):
     if r["advice"]:
         lines.append("\n<b>Что поправить:</b>")
         lines += [f"{i}. {html.escape(a['problem'])}\n   → {html.escape(a['fix'])}" for i, a in enumerate(r["advice"], 1)]
+    if rm := remarks.score(user.tone, r["score"]):  # П13
+        lines.append(f"\n💬 {html.escape(rm)}")
     lines.append("\nЧтобы сделать резюме под конкретную вакансию: /new")
     await message.answer("\n".join(lines))
 

@@ -15,7 +15,7 @@ from app.models import (Company, CompanyScore, CompanySubscription, Contact, Job
                         Vacancy, VacancyScore)
 from app.schemas import ProfileData
 from app.api.billing_routes import payment_required
-from app.services import billing, collect, cv_render, export, intake, llm, profile, tailor
+from app.services import billing, collect, cv_render, export, intake, llm, profile, remarks, tailor
 from app.services.stt import STTError, transcribe_any
 from app.services.stt import available as stt_available
 
@@ -77,7 +77,8 @@ class ContactIn(BaseModel):
 
 
 class SettingsIn(BaseModel):
-    notify_threshold: int
+    notify_threshold: int | None = None
+    tone: str | None = None  # П13: neutral | ty | vy
 
 
 @api.get("/me")
@@ -85,7 +86,8 @@ async def me(user: User = Depends(current_user), session: AsyncSession = Depends
     c = await session.get(Contact, user.id)
     return {"id": user.id, "first_name": user.first_name, "consent": user.consent_at is not None,
             "guest": bool(user.guest), "telegram": user.tg_id is not None,
-            "notify_threshold": user.notify_threshold, "is_admin": user.tg_id in get_settings().admin_tg_ids,
+            "notify_threshold": user.notify_threshold, "tone": remarks.norm(user.tone),
+            "is_admin": user.tg_id in get_settings().admin_tg_ids,
             "contact": {"full_name": c.full_name, "email": c.email, "phone": c.phone, "city": c.city} if c else None}
 
 
@@ -101,7 +103,12 @@ async def consent(user: User = Depends(current_user), session: AsyncSession = De
 async def update_settings(body: SettingsIn, user: User = Depends(current_user),
                           session: AsyncSession = Depends(get_session)):
     u = await session.get(User, user.id)
-    u.notify_threshold = max(0, min(100, body.notify_threshold))
+    if body.notify_threshold is not None:
+        u.notify_threshold = max(0, min(100, body.notify_threshold))
+    if body.tone is not None:
+        if body.tone not in remarks.TONES:
+            raise HTTPException(400, "Неизвестный стиль")
+        u.tone = body.tone
     await session.commit()
     return {"ok": True}
 
@@ -515,9 +522,10 @@ async def review_resume(user: User = Depends(current_user), session: AsyncSessio
         raise HTTPException(400, "Сначала загрузите резюме")
     contact = await session.get(Contact, user.id)
     try:
-        return await review.review(text, contact.full_name if contact else None)
+        res = await review.review(text, contact.full_name if contact else None)
     except llm.LLMError as e:
         raise HTTPException(502, str(e))
+    return {**res, "remark": remarks.score(user.tone, res.get("score"))}
 
 
 @api.post("/targets/{target_id}/package")
@@ -602,7 +610,8 @@ async def get_package(package_id: int, user: User = Depends(current_user),
                 "scheme": pkg.scheme, "flags": pkg.fact_flags, "instruction": pkg.instruction,
                 "revision_left": revision_left, "revision_price": billing.PRODUCTS["revision"].price_rub,
                 "improve_left": improve_left, "coverage": pkg.coverage,
-                "coverage_before": target.coverage if target else None, "score": score, **view}
+                "coverage_before": target.coverage if target else None, "score": score,
+                "remark": remarks.package(user.tone, score, pkg.coverage), **view}
     view = export.cv_view(pkg, contact, drop_flagged=False)
     return {"id": pkg.id, "vacancy_id": pkg.vacancy_id, "version": pkg.version, "flags": pkg.fact_flags,
             "instruction": pkg.instruction, **view}

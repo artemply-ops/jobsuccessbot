@@ -63,7 +63,7 @@ BASIC_ASK = ("Чтобы уже сейчас искать вакансии, на
 # Пивот 08.11: в меню только сценарий резюме. /search, /vacancies, /companies, /profile работают, но скрыты
 COMMANDS = [("start", "Сделать резюме"), ("new", "Новая вакансия"), ("check", "Проверить резюме"),
             ("contacts", "Контакты для резюме"), ("plan", "Тариф и оплата"), ("promo", "Ввести промокод"),
-            ("web", "Кабинет на сайте"), ("help", "Помощь")]
+            ("web", "Кабинет на сайте"), ("style", "Стиль общения"), ("help", "Помощь")]
 
 
 def web_url(path: str = "") -> str | None:
@@ -158,6 +158,45 @@ async def help_cmd(message: Message):
     from app.services.site_texts import bot_answer
 
     await bot_answer(message, "help")
+
+
+def _style_kb(current: str) -> InlineKeyboardMarkup:
+    from app.services import remarks
+
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text=("✓ " if t == current else "") + remarks.TONE_TITLES[t], callback_data=f"style:{t}")
+        for t in remarks.TONES]])
+
+
+@dp.message(Command("style"))
+async def style_cmd(message: Message):
+    """П13: стиль реплик сервиса. Документы всегда в деловом стиле, меняются только комментарии бота и сайта."""
+    from app.services import remarks
+
+    user = await get_user(message.from_user)
+    await message.answer("Как с вами общаться? Это про мои комментарии к оценкам. Резюме и письма всегда "
+                         "в деловом стиле.", reply_markup=_style_kb(remarks.norm(user.tone)))
+
+
+@dp.callback_query(F.data.startswith("style:"))
+async def style_set(cb: CallbackQuery):
+    from app.services import remarks
+
+    tone = cb.data.split(":", 1)[1]
+    if tone not in remarks.TONES:
+        await cb.answer()
+        return
+    user = await get_user(cb.from_user)
+    async with SessionLocal() as s:
+        (await s.get(User, user.id)).tone = tone
+        await s.commit()
+    note = {"neutral": "Готово, без лишних слов.", "ty": "Договорились, теперь на ты.",
+            "vy": "Хорошо, буду обращаться на вы."}[tone]
+    try:
+        await cb.message.edit_text(note, reply_markup=_style_kb(tone))
+    except Exception:  # noqa: BLE001  повторное нажатие той же кнопки: «message is not modified»
+        pass
+    await cb.answer()
 
 
 @dp.message(Command("web"))

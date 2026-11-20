@@ -3,7 +3,7 @@ import { api, getConfig, upload, waitJob, type Cfg } from "../api";
 import type { Me } from "../App";
 import { PlanCard } from "./Billing";
 import { LoginBox, LoginMethods } from "./Auth";
-import { MyPackages, MyTargets, PushCard, RestartCard } from "./Cabinet";
+import { MyPackages, MyTargets, PushCard, RestartCard, ToneCard } from "./Cabinet";
 
 // Разделы кабинета вместо одной простыни. Раздел в адресе (?tab=), чтобы ссылка открывала нужный
 const TABS: [string, string][] = [["data", "Мои данные"], ["cv", "Мои резюме"], ["jobs", "Мои вакансии"], ["plan", "Тариф и вход"]];
@@ -94,7 +94,7 @@ export default function ProfilePage({ me, onMeChange }: { me: Me; onMeChange: ()
       {!me.guest && (tab === "cv" || tab === "jobs" || tab === "data") && <RestartCard />}
       {tab === "cv" && <MyPackages />}
       {tab === "jobs" && <MyTargets />}
-      {tab === "plan" && <>{!me.guest && <LoginMethods onChange={onMeChange} />}<PushCard /><PlanCard /></>}
+      {tab === "plan" && <>{!me.guest && <LoginMethods onChange={onMeChange} />}<ToneCard me={me} onChange={onMeChange} /><PushCard /><PlanCard /></>}
       {tab === "data" && <>
       {busy && <div className="banner">{busy}</div>}
       {err && <div className="banner error">{err}</div>}

@@ -24,11 +24,11 @@ type Cov = { requirements: Req[]; req_covered: number; req_partial: number; req_
 type Score = { kind: "vacancy" | "quality"; title: string; before: number | null; after: number | null };
 type Pkg = { id: number; version: number; items: string[]; scheme: string; flags: Flag[]; revision_left: boolean; revision_price: number;
   improve_left: number; coverage: Cov | null; coverage_before: Cov | null; file_names?: Record<string, string>;
-  docx_names?: Record<string, string>; recruiter_message?: string; linkedin_text?: string; score?: Score | null };
+  docx_names?: Record<string, string>; recruiter_message?: string; linkedin_text?: string; score?: Score | null; remark?: string };
 type Salary = { role?: string; n: number; scope?: string; median: number | null; p25?: number; p75?: number;
   source?: string; date?: string; caveat?: string; url?: string; reason?: string };
 type ReviewRes = { score: number; checks: { key: string; title: string; ok: boolean; note: string }[];
-  advice: { problem: string; fix: string }[] };
+  advice: { problem: string; fix: string }[]; remark?: string };
 
 const ITEMS: [string, string][] = [
   ["cv", "Резюме"],
@@ -681,6 +681,7 @@ function Result(props: {
             <ul>{cvFlags.map((f) => <li key={f.text}>{f.text}</li>)}</ul></div>
         )}
         {pkg.score && pkg.score.before != null && pkg.score.after != null && <ScoreLine s={pkg.score} />}
+        {pkg.remark && <Remark text={pkg.remark} />}
         <div className="previews" hidden={!fileItems.length}>
           {fileItems.map((it) => (
             <div key={it} className="preview">
@@ -782,6 +783,11 @@ function Result(props: {
       <button className="btn secondary" onClick={onNew}>{onTarget ? "В начало" : "Новая вакансия"}</button>
     </div>
   );
+}
+
+// П13: живая реплика сервиса (стиль «на ты / на вы» в кабинете), пусто при нейтральном стиле
+function Remark({ text }: { text: string }) {
+  return <div className="remark"><span aria-hidden>💬</span> {text}</div>;
 }
 
 // П4: балл до и после. Под вакансию: соответствие требованиям; без вакансии: качество по проверкам /check
@@ -896,6 +902,7 @@ function ReviewBox({ onWait }: { onWait: (stages: string[] | null) => void }) {
       {res && (
         <div className="review">
           <b>Оценка резюме: {res.score} из 100</b>
+          {res.remark && <Remark text={res.remark} />}
           <ul className="cov-list">
             {res.checks.map((c) => <li key={c.key} className={c.ok ? "covered" : "missing"}><span>{c.ok ? "✓" : "!"} {c.title}</span>
               <span className="muted small">{c.note}</span></li>)}

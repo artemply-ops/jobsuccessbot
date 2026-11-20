@@ -486,3 +486,67 @@ code { font-size: 12px; background: var(--bg2); padding: 1px 5px; border-radius:
 .text-block { border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
 .text-body { white-space: pre-wrap; word-break: break-word; font: inherit; margin: 0; max-height: 360px; overflow: auto; }
 .small-btn { padding: 6px 10px; font-size: 13px; }
+
+/* П13: живая реплика сервиса и выбор стиля общения */
+.remark { padding: 10px 14px; border-radius: 12px; background: color-mix(in srgb, var(--gold) 14%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--gold) 35%, transparent); font-weight: 500; animation: pop .35s ease-out both; }
+.tone-pick { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+.tone-pick button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; font: inherit;
+  color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; cursor: pointer; }
+.tone-pick button.on { border: 2px solid var(--accent); padding: 9px 11px; background: color-mix(in srgb, var(--accent) 8%, var(--bg)); }
+@keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.98); } to { opacity: 1; transform: none; } }
+
+/* П12: глубина и движение на лендинге. Палитра «зелёный + золото» прежняя */
+.reveal { opacity: 0; transform: translateY(22px); transition: opacity .7s cubic-bezier(.2, .7, .2, 1), transform .7s cubic-bezier(.2, .7, .2, 1); }
+.reveal.in { opacity: 1; transform: none; }
+.rise > * { animation: rise .8s cubic-bezier(.2, .7, .2, 1) both; }
+.rise > :nth-child(2) { animation-delay: .08s; } .rise > :nth-child(3) { animation-delay: .16s; }
+.rise > :nth-child(4) { animation-delay: .24s; } .rise > :nth-child(n+5) { animation-delay: .32s; }
+@keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+
+.hero { position: relative; overflow: hidden; }
+.hero-visual { position: relative; isolation: isolate; }
+.hero-scene { position: absolute; inset: -18% -22%; width: 144%; height: 136%; z-index: -1; pointer-events: none; }
+.hs-orbit { fill: none; stroke: color-mix(in srgb, var(--green) 16%, transparent); stroke-width: 1.2; stroke-dasharray: 2 9;
+  transform-origin: 300px 300px; animation: spin 90s linear infinite; }
+.hs-orbit-2 { stroke: color-mix(in srgb, var(--gold) 30%, transparent); animation-duration: 60s; animation-direction: reverse; }
+.hs-growth { fill: none; stroke-width: 4; stroke-linecap: round; stroke-dasharray: 900; stroke-dashoffset: 900;
+  animation: draw 2.4s .4s cubic-bezier(.4, .1, .2, 1) forwards; }
+.hs-dot { fill: var(--gold); opacity: 0; animation: pop .4s 2.6s ease-out forwards, glow 3s 3s ease-in-out infinite; }
+.hs-spark { fill: var(--gold); opacity: .0; transform-box: fill-box; transform-origin: center; animation: twinkle 4.2s ease-in-out infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes glow { 50% { filter: drop-shadow(0 0 8px var(--gold)); } }
+@keyframes twinkle { 0%, 100% { opacity: 0; transform: scale(.4) rotate(0); } 45% { opacity: .85; transform: scale(1) rotate(45deg); } }
+.hero-card { animation: float 7s ease-in-out infinite; backdrop-filter: blur(6px); }
+@keyframes float { 50% { transform: translateY(-8px); } }
+@property --ring { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+.score-ring { --ring: 90%; background: conic-gradient(var(--gold) 0 var(--ring), var(--soft) var(--ring) 100%);
+  animation: ring 1.6s .6s cubic-bezier(.3, .7, .2, 1) both; }
+@keyframes ring { from { --ring: 0%; } }
+
+.band, .final { position: relative; overflow: hidden; isolation: isolate; }
+.band::before, .final::before { content: ""; position: absolute; inset: -40%; z-index: -1; pointer-events: none;
+  background: radial-gradient(closest-side at 30% 40%, color-mix(in srgb, var(--gold) 22%, transparent), transparent),
+    radial-gradient(closest-side at 75% 65%, color-mix(in srgb, #fff 9%, transparent), transparent);
+  animation: drift 26s ease-in-out infinite alternate; }
+@keyframes drift { to { transform: translate3d(6%, -4%, 0) rotate(8deg); } }
+.feature, .price, .path { transition: transform .25s ease, box-shadow .25s ease, opacity .7s cubic-bezier(.2, .7, .2, 1); }
+@media (hover: hover) {
+  .site .feature:hover, .site .price:hover, .site .path:hover { transform: translateY(-4px); box-shadow: var(--shadow); }
+}
+.feature.reveal { transition: opacity .7s cubic-bezier(.2, .7, .2, 1), transform .7s cubic-bezier(.2, .7, .2, 1), box-shadow .25s ease; }
+.feature.reveal.in:hover { transition-delay: 0s !important; }
+
+/* Иллюстрации из Weave: появятся, когда файлы лягут в web/public/art */
+.art { display: block; max-width: 100%; height: auto; pointer-events: none; }
+.art-hero { position: absolute; inset: auto -10% -14% auto; width: 70%; z-index: -1; opacity: .9; }
+.art-band, .art-final { position: absolute; right: 0; bottom: 0; width: min(420px, 45%); z-index: -1; opacity: .35; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; transition: none; }
+  .rise > *, .hero-card, .hs-orbit, .hs-spark, .hs-dot, .score-ring, .band::before, .final::before, .remark { animation: none; }
+  .hs-growth { animation: none; stroke-dashoffset: 0; }
+  .hs-dot { opacity: 1; }
+}
+@media (max-width: 860px) { .hero-scene { inset: -10% -6%; width: 112%; height: 120%; } }

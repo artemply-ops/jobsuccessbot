@@ -1,5 +1,6 @@
 // Разделы кабинета: мои резюме (все версии пакетов) и мои вакансии. Открыть = вернуться в мастер на этот пакет.
 import { useEffect, useState } from "react";
+import type { Me } from "../App";
 import { api, download } from "../api";
 
 type PkgRow = { id: number; target_id: number | null; title: string; company: string; version: number; items: string[];
@@ -123,6 +124,38 @@ export function PushCard() {
       <p className="muted small">Сообщим, когда документы готовы, даже если сайт закрыт. В уведомлении нет ваших данных.
         На iPhone работает, если сайт добавлен на экран «Домой».</p>
       {msg && <p className="error small">{msg}</p>}
+    </div>
+  );
+}
+
+// П13: стиль комментариев сервиса. Документы (резюме, письмо) всегда в деловом стиле
+const TONES: [Me["tone"], string, string][] = [
+  ["neutral", "Нейтрально", "Только цифры и факты"],
+  ["vy", "На вы", "Вежливые живые комментарии"],
+  ["ty", "На ты", "Например: «Красота: 9 из 10 пунктов залетают на позицию»"],
+];
+
+export function ToneCard({ me, onChange }: { me: Me; onChange: () => void }) {
+  const [tone, setTone] = useState<Me["tone"]>(me.tone || "neutral");
+  const [err, setErr] = useState("");
+  const pick = async (t: Me["tone"]) => {
+    const was = tone;
+    setTone(t); setErr("");
+    try { await api("/me/settings", { method: "PATCH", json: { tone: t } }); onChange(); }
+    catch (e: any) { setTone(was); setErr(e.message); }
+  };
+  return (
+    <div className="card stack small-gap">
+      <h2>Стиль общения</h2>
+      <p className="muted small">Как сервис комментирует оценки на сайте, в мини-приложении и в боте. Резюме и письма всегда в деловом стиле.</p>
+      <div className="tone-pick" role="radiogroup">
+        {TONES.map(([k, t, note]) => (
+          <button key={k} role="radio" aria-checked={tone === k} className={tone === k ? "on" : ""} onClick={() => pick(k)}>
+            <b>{t}</b><span className="muted small">{note}</span>
+          </button>
+        ))}
+      </div>
+      {err && <p className="error small">{err}</p>}
     </div>
   );
 }
