@@ -300,3 +300,13 @@
 - С сервера trudvsem отвечает медленно: limit=5 за 15 с, limit=100 за 17 с, limit=50 за 22 с. Таймаут 20 с не хватал,
   ориентир не показывался. Исправлено: таймаут 45 с, порции 100 и 50 (меньше порция не быстрее). Выкачено c858a19
   13:19 UTC: с сервера «Бухгалтер» по России медиана 48 000 по 98 вакансиям, https 200, бот polling, ошибок нет.
+
+### 20.11.2026: статус почты
+- Владелец завёл почту на reg.ru для job-pilot.ru: MX mxs1/mxs2.reg.ru, SPF (include:_spf.hosting.reg.ru), DKIM (селектор dkim),
+  DMARC p=none. С сервера mail.hosting.reg.ru:465 отвечает (контейнер app, SSL, NOOP 250). Р1 закрыт: провайдер reg.ru
+- На сервере SMTP_* в .env НЕТ (есть только SUPPORT_EMAIL): mailer.available() = False, вход по почте выключен. Б1 открыт
+- scripts/set_secret.sh не принимал SMTP_*, MAIL_FROM, YOOKASSA_*: добавлены в ALLOWED (выкатка не нужна, скрипт локальный)
+- Ввод владельцем: SMTP_HOST=mail.hosting.reg.ru, SMTP_USER=полный адрес ящика, SMTP_PASSWORD, MAIL_FROM=«JobPilot <тот же адрес>»
+  (reg.ru не даёт слать от чужого адреса). SMTP_PORT не нужен, по умолчанию 465. После ввода: проверить вход и одно письмо
+- Запросы сканеров к /.env, /smtp/.env и т.п. получают index.html SPA (716 байт), файлы не отдаются
+- 0be476c ушёл на GitHub (origin/main = main)
