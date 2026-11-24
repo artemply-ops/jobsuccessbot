@@ -1,4 +1,4 @@
-# Сервер Timeweb (общий с другими проектами, 2 ГБ RAM).
+# Сервер Timeweb (общий с другими проектами, 4 ГБ RAM + swap 2 ГБ).
 # Один контейнер app: API + PWA + бот в одном процессе (RUN_BOT_IN_API), чтобы не тратить память дважды.
 # Запуск: docker compose -f docker-compose.server.yml -p jobsuccess up -d --build
 services:
@@ -17,11 +17,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.server
-      # Кэш слоёв (apt, pip) берётся из работающего образа: его не удаляет очистка Docker, пока app запущен.
-      # Кэш сборки BuildKit на общем сервере кто-то чистит (20.11.2026 apt и pip качались заново, около 15 минут)
-      cache_from: [jobsuccess-app:latest]
+      # apt и pip в локальном базовом образе (Dockerfile.base), deploy.sh передаёт его тег по хэшу requirements.txt
       args:
-        BUILDKIT_INLINE_CACHE: "1"
+        BASE: ${APP_BASE:-jobsuccess-base:latest}
     env_file: .env
     environment:
       ENV: prod

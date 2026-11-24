@@ -738,6 +738,19 @@ async def schemes():
     return [_scheme_view(s) for s in cv_render.SCHEMES.values()]
 
 
+@api.get("/schemes/custom")
+async def scheme_custom(color: str):
+    """Т9: схема из цвета, который человек выбрал сам (сайт компании закрыт от ботов или цвета не нашлись)."""
+    import re
+
+    from app.services import brand
+
+    c = color.strip().lstrip("#").lower()
+    if not re.fullmatch(r"[0-9a-f]{6}", c):
+        raise HTTPException(400, "Цвет в формате RRGGBB")
+    return _scheme_view(cv_render.scheme_of(cv_render.company_key(brand.palette([c])))) | {"title": "Свой цвет"}
+
+
 @api.get("/targets/{target_id}/brand")
 async def target_brand(target_id: int, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
     """Схема в цветах компании: цвета снимаются с сайта компании заново при каждом запросе."""

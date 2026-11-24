@@ -198,4 +198,10 @@ async def scheduler_loop(interval_hours: int = 24) -> None:
                 log.info("expired service rows purged: %s", await cleanup.purge_expired(s))
         except Exception:
             log.exception("guest cleanup failed")
+        try:  # Т17: ориентиры по зарплате для недавно спрошенных должностей, чтобы отвечать сразу
+            from app.services import salary
+
+            log.info("salary refresh: %s", await salary.refresh_popular())
+        except Exception:
+            log.exception("salary refresh failed")
         await asyncio.sleep(interval_hours * 3600)

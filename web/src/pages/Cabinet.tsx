@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import type { Me } from "../App";
 import { api, download } from "../api";
+import * as pushApi from "../push";
 
 type PkgRow = { id: number; target_id: number | null; title: string; company: string; version: number; items: string[];
   created_at: string; coverage: number | null; file_names?: Record<string, string> };
@@ -104,12 +105,11 @@ export function MyTargets() {
 export function PushCard() {
   const [on, setOn] = useState<boolean | null>(null);
   const [msg, setMsg] = useState("");
-  useEffect(() => { import("../push").then((p) => (p.pushSupported() ? p.pushEnabled().then(setOn) : setOn(null))); }, []);
+  useEffect(() => { if (pushApi.pushSupported()) pushApi.pushEnabled().then(setOn); else setOn(null); }, []);
   const toggle = async () => {
-    const p = await import("../push");
     setMsg("");
-    if (on) { await p.disablePush(); setOn(false); return; }
-    const r = await p.enablePush().catch(() => "off" as const);
+    if (on) { await pushApi.disablePush(); setOn(false); return; }
+    const r = await pushApi.enablePush().catch(() => "off" as const);
     if (r === "on") setOn(true);
     else setMsg(r === "denied" ? "Браузер запретил уведомления. Разрешите их в настройках сайта (значок замка в адресной строке)."
       : r === "unsupported" ? "Этот браузер не поддерживает уведомления." : "Уведомления пока не подключены.");
@@ -131,8 +131,8 @@ export function PushCard() {
 // П13: стиль комментариев сервиса. Документы (резюме, письмо) всегда в деловом стиле
 const TONES: [Me["tone"], string, string][] = [
   ["neutral", "Нейтрально", "Только цифры и факты"],
-  ["vy", "На вы", "Вежливые живые комментарии"],
-  ["ty", "На ты", "Например: «Красота: 9 из 10 пунктов залетают на позицию»"],
+  ["vy", "На вы", "Например: «9 из 10 требований закрыты, можно смело откликаться»"],
+  ["ty", "На ты", "Например: «Мощно, 9 из 10 требований закрыто»"],
 ];
 
 export function ToneCard({ me, onChange }: { me: Me; onChange: () => void }) {

@@ -1,0 +1,10 @@
+# Базовый образ: системные пакеты и Python-библиотеки. Собирается на сервере только когда меняется
+# backend/requirements.txt или этот файл (тег jobsuccess-base:<хэш>, см. scripts/deploy.sh).
+# Зачем: кэш сборки BuildKit на сервере один раз пропал (20.11.2026, причина не установлена), и apt с pip
+# качались заново около 15 минут. Готовый локальный образ от этого не зависит, а cache_from в режиме
+# docker-драйвера ищет образ в Docker Hub и не работает (проверено 24.11.2026).
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY backend/requirements.txt backend/
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r backend/requirements.txt

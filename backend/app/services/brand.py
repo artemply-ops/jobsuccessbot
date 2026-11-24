@@ -101,7 +101,8 @@ def icon_colors(data: bytes) -> Counter:
         im = im.convert("RGBA").resize((48, 48))
     except Exception:  # noqa: BLE001  битая или неподдерживаемая иконка
         return w
-    for r, g, b, a in im.getdata():
+    px = im.tobytes()  # RGBA подряд; getdata() в Pillow устаревает
+    for r, g, b, a in (px[i:i + 4] for i in range(0, len(px), 4)):
         if a < 128:
             continue
         r, g, b = (min(255, round(x / 16) * 16) for x in (r, g, b))  # грубо: близкие оттенки в одну корзину

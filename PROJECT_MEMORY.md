@@ -339,3 +339,19 @@
 - deploy.sh с remote() прошёл обычную выкатку; обрыва SSH не было, повтор не испытан
 - На сервере НЕ заданы YANDEX_API_KEY, YANDEX_CLIENT_ID, YOOKASSA_*. В базе 1 пользователь и 1 пакет (15.11). Копии ежедневные, последняя 24.11 03:15
 - Найдено: accounts.merge не переносит users.tone (Т18)
+
+### 24.11.2026 (позже): техдолг Т9, Т10, Т11, Т17, Т18, Т19 в коде, НЕ выкачено и НЕ прогнано тестами
+- Владелец: «доделай тех долг, не прогоняй пока никакие тесты и оплаты». Тесты написаны, но не запускались (Т21)
+- Статус перед работой: прод a17afde, app/db/caddy Up, restarts 0, ошибок в логе за сутки 0, диск 37%, копия 24.11 03:15
+- Т18: accounts.merge переносит tone (keep.tone or drop.tone) + test_merge_keeps_tone_from_dropped_account
+- Т10: brand.py через im.tobytes() вместо getdata; Cabinet.tsx импортирует push статически (pushApi)
+- Т11: Dockerfile.base (apt, pip), Dockerfile.server FROM ${BASE}; scripts/server_build.sh собирает jobsuccess-base:<хэш
+  requirements.txt + Dockerfile.base>, если его нет, затем app с APP_BASE; старые теги base удаляет. cache_from и
+  BUILDKIT_INLINE_CACHE убраны из compose. deploy.sh шаг 4 запускает server_build.sh (pgrep по его имени)
+- Т19: тексты remarks.py и подсказки карточки «Стиль общения» прогнаны через humanizer-ru-pro («залетают на позицию» убрано)
+- Т9: GET /api/schemes/custom?color=RRGGBB, в шаге «Цветовая схема» блок «Свой цвет» (input color, запрос после паузы 300 мс)
+- Т17: salary.py хранит расчёты в FILES_DIR/_cache/salary.json (только должность, город, цифры), свежесть 36 ч, при
+  недоступном источнике отдаёт расчёт до 7 дней; refresh_popular() в scheduler_loop раз в сутки, до 30 должностей,
+  спрошенных за 30 дней. Полный ночной сбор всех вакансий в БД не делали: дампы большие, сервер общий
+- Проверено только: tsc --noEmit чистый, ast.parse Python-файлов, bash -n deploy.sh и server_build.sh
+- Осталось в техдолге: Т1, Т6, Т15 (ждут Р7, Р10), Т7, Т13, Т16 (живые пакеты с ИИ), Т8 (e2e), Т14 (Р4), Т20, Т21

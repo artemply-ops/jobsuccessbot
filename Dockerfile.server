@@ -1,13 +1,10 @@
-# Образ для общего сервера с 2 ГБ RAM: фронтенд НЕ собирается здесь.
+# Образ для общего сервера: фронтенд НЕ собирается здесь.
 # web/dist собирается локально (npm run build) и кладётся на сервер через scripts/deploy.sh.
 # Причина: npm ci на сервере съедал свободную память, ядро убивало процессы (OOM 16.10.2026).
-FROM python:3.12-slim
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng && rm -rf /var/lib/apt/lists/*
+# apt и pip живут в базовом образе (Dockerfile.base): здесь только код, сборка занимает секунды.
+ARG BASE=jobsuccess-base:latest
+FROM ${BASE}
 WORKDIR /app
-COPY backend/requirements.txt backend/
-# Кэш pip между сборками (BuildKit): новая библиотека в requirements не качает заново весь список.
-# 15.11.2026 без кэша сборка шла 25+ минут из-за onnxruntime и других тяжёлых пакетов
-RUN --mount=type=cache,target=/root/.cache/pip pip install -r backend/requirements.txt
 COPY backend/ backend/
 COPY data/companies_seed.yaml data/
 COPY web/dist web/dist

@@ -160,6 +160,19 @@ async def test_merge_keeps_both_profile_histories(session):
     assert [(p.version, p.data["v"]) for p in rows] == [(1, "a1"), (2, "b1"), (3, "a2")]  # свежий последним
 
 
+
+async def test_merge_keeps_tone_from_dropped_account(session):
+    a, b = User(tg_id=7004), User(guest=True, tone="ty")
+    session.add_all([a, b])
+    await session.flush()
+    await accounts.merge(session, keep=a, drop=b)
+    assert a.tone == "ty"
+    c, d = User(tg_id=7005, tone="vy"), User(guest=True, tone="ty")
+    session.add_all([c, d])
+    await session.flush()
+    await accounts.merge(session, keep=c, drop=d)
+    assert c.tone == "vy"  # свой выбор у оставшегося кабинета важнее
+
 async def test_admin_stats_only_for_admin_and_counts():
     await init_db()
     async with _client() as c:

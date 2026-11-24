@@ -265,6 +265,7 @@ async def merge(session: AsyncSession, keep: User, drop: User) -> None:
     tg = drop.tg_id
     keep.consent_at = min([_aware(d) for d in (keep.consent_at, drop.consent_at) if d], default=None)
     keep.username, keep.first_name = keep.username or drop.username, keep.first_name or drop.first_name
+    keep.tone = keep.tone or drop.tone  # стиль общения (П13): выбранный в любом из кабинетов не теряется
     keep.guest = None
     drop.tg_id = None
     await session.flush()

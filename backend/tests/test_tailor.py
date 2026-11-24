@@ -282,3 +282,31 @@ def test_salary_summary_from_open_data():
     none = salary.summarize("Главный технолог", None, rows)
     assert none["median"] is None and "меньше" in none["reason"]
     assert "175 000" in salary.text(res)
+
+
+async def test_salary_store_serves_cached_and_refreshes(monkeypatch, tmp_path):
+    """Т17: повторный запрос из сохранённого расчёта; источник лежит -> последний расчёт; ночной пересчёт. ТЕСТОВЫЕ ДАННЫЕ."""
+    from app.services import salary
+
+    monkeypatch.setattr(salary, "_path", lambda: tmp_path / "salary.json")
+    monkeypatch.setattr(salary, "_store", None)
+    monkeypatch.setattr(salary.asyncio, "sleep", lambda *_: __import__("asyncio").sleep(0))
+    calls = []
+
+    async def fetch(role, city):
+        calls.append(role)
+        return None if len(calls) == 3 else {"role": role, "median": 100_000 * len(calls)}
+
+    monkeypatch.setattr(salary, "_fetch", fetch)
+    assert (await salary.estimate("Бухгалтер", "Москва"))["median"] == 100_000
+    assert (await salary.estimate("Бухгалтер", "Москва"))["median"] == 100_000 and len(calls) == 1  # из хранилища
+    item = salary._store["бухгалтер|москва"]
+    item["at"] -= salary.FRESH + 1
+    assert (await salary.estimate("Бухгалтер", "Москва"))["median"] == 200_000 and len(calls) == 2
+    item = salary._store["бухгалтер|москва"]
+    item["at"] -= salary.FRESH + 1
+    assert (await salary.estimate("Бухгалтер", "Москва"))["median"] == 200_000  # источник лежит: прошлый расчёт
+    monkeypatch.setattr(salary, "_store", None)  # перезапуск: данные из файла
+    salary._load()["бухгалтер|москва"]["at"] -= 86400
+    r = await salary.refresh_popular()
+    assert r == {"kept": 1, "refreshed": 1, "failed": 0} and salary._store["бухгалтер|москва"]["res"]["median"] == 400_000

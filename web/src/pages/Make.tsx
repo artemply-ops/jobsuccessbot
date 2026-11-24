@@ -519,7 +519,34 @@ function Schemes({ value, onChange, onNext, targetId }: { value: string; onChang
         {list.map((s) => <SchemeCard key={s.key} s={s} on={s.key === value} onClick={() => onChange(s.key)} />)}
       </div>
       {brand && !brand.scheme && brand.reason && <p className="muted small">🎨 {brand.reason}</p>}
+      <OwnColor value={value} onChange={onChange} />
       <button className="btn" onClick={onNext}>Дальше</button>
+    </div>
+  );
+}
+
+// Т9: свой фирменный цвет, если с сайта компании цвета не снять (защита от ботов у sber, ozon, tbank)
+function OwnColor({ value, onChange }: { value: string; onChange: (k: string) => void }) {
+  const [own, setOwn] = useState<Scheme | null>(null);
+  const [err, setErr] = useState("");
+  const timer = useRef<number | undefined>(undefined);
+  const pick = (hex: string) => {  // палитра шлёт события, пока ведут мышью: запрос после паузы
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      setErr("");
+      api<Scheme>(`/schemes/custom?color=${hex.slice(1)}`)
+        .then((s) => { setOwn(s); onChange(s.key); })
+        .catch((e) => setErr(e.message));
+    }, 300);
+  };
+  return (
+    <div className="stack small-gap">
+      <label className="row gap muted small">
+        <input type="color" defaultValue="#1f6f5c" onChange={(e) => pick(e.target.value)} aria-label="Свой цвет компании" />
+        Свой цвет: выберите фирменный цвет компании, схема соберётся из него
+      </label>
+      {own && <div className="schemes"><SchemeCard s={own} on={own.key === value} onClick={() => onChange(own.key)} /></div>}
+      {err && <p className="error small">{err}</p>}
     </div>
   );
 }

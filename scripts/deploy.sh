@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Деплой на общий сервер (2 ГБ RAM). Запуск из корня проекта: bash scripts/deploy.sh
+# Деплой на общий сервер (4 ГБ RAM + swap). Запуск из корня проекта: bash scripts/deploy.sh
 # 1) фронтенд собирается локально, 2) код уходит в GitHub, 3) готовый web/dist копируется на сервер,
-# 4) на сервере git pull и сборка Python-образа С ОСТАНОВЛЕННЫМ app, чтобы сборка не вызвала OOM
-#    (16.10.2026 сборка с работающим app исчерпала память, ядро убило uvicorn).
+# 4) на сервере git pull и scripts/server_build.sh: базовый образ (apt, pip) только при смене requirements.txt,
+#    образ app с кодом поверх него. app останавливается на сборку, только если мало памяти (OOM 16.10.2026).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -44,16 +44,15 @@ remote "$(cat <<EOS
 set -e
 cd $DIR
 # Повтор после обрыва SSH: сборка уже запущена прошлой попыткой, второй раз не запускаем
-if pgrep -f "jobsuccess build -q app" >/dev/null && [ "\$(git rev-parse --short HEAD)" = "$REV" ]; then
+if pgrep -f "scripts/server_build.sh" >/dev/null && [ "\$(git rev-parse --short HEAD)" = "$REV" ]; then
   echo "  сборка уже идёт, коммит $REV"; exit 0
 fi
 git fetch -q origin main && git reset -q --hard origin/main
 test "\$(git rev-parse --short HEAD)" = "$REV" || { echo "на сервере не тот коммит"; exit 1; }
 rm -rf web/dist && tar -C web -xzf /tmp/jsb-dist.tgz && rm -f /tmp/jsb-dist.tgz
-# Сборка при работающем app: сайт и бот не лежат, даже если pip качает долго. Фронтенд здесь не собирается
-# (причина OOM 16.10.2026 была в npm). Если свободной памяти меньше 1500 МБ, app на время сборки останавливается.
-# При неудачной сборке app поднимается на прежнем образе: бот не остаётся выключенным
-nohup sh -c 'C="docker compose -f docker-compose.server.yml -p jobsuccess"; AV=\$(grep MemAvailable /proc/meminfo | tr -dc 0-9); echo "памяти свободно \$AV кБ"; [ "\$AV" -lt 1536000 ] && \$C stop app; if \$C build -q app; then \$C up -d app; echo EXIT=0; else \$C up -d --no-build app; echo "EXIT=1 (сборка упала, app поднят на прежнем образе)"; fi' > /tmp/jsb-build.log 2>&1 </dev/null &
+# Сборка и перезапуск в scripts/server_build.sh: базовый образ (apt, pip) только при смене requirements.txt,
+# образ app поверх него. Фронтенд здесь не собирается (причина OOM 16.10.2026 была в npm)
+nohup bash scripts/server_build.sh > /tmp/jsb-build.log 2>&1 </dev/null &
 echo "  сборка запущена на сервере, коммит $REV"
 EOS
 )"
