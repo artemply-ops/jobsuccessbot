@@ -290,7 +290,8 @@ async def test_salary_store_serves_cached_and_refreshes(monkeypatch, tmp_path):
 
     monkeypatch.setattr(salary, "_path", lambda: tmp_path / "salary.json")
     monkeypatch.setattr(salary, "_store", None)
-    monkeypatch.setattr(salary.asyncio, "sleep", lambda *_: __import__("asyncio").sleep(0))
+    real_sleep = salary.asyncio.sleep
+    monkeypatch.setattr(salary.asyncio, "sleep", lambda *_: real_sleep(0))
     calls = []
 
     async def fetch(role, city):
